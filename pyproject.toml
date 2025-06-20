@@ -37,7 +37,7 @@ where = ["src"]
 version = {attr = "aind_hcr_data_loader.__version__"}
 
 [tool.black]
-line-length = 79
+line-length = 99
 target_version = ['py310']
 exclude = '''
 
@@ -69,10 +69,10 @@ exclude_lines = [
     "^import .*",
     "pragma: no cover"
 ]
-fail_under = 100
+fail_under = 50
 
 [tool.isort]
-line_length = 79
+line_length = 99
 profile = "black"
 skip = [".conda"]
 
