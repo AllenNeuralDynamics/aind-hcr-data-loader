@@ -8,3 +8,7 @@ exclude =
     .conda
 max-complexity = 10
 max-line-length = 120
+# ignore complexity for specific files
+per-file-ignores =
+    src/aind_hcr_data_loader/tile_data.py:C901  # Ignore complexity for a specific module
+    
