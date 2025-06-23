@@ -72,17 +72,69 @@ class TileData:
 
     @property
     def data(self):
-        """Get the full computed data in (z,y,x) order"""
-        self._load_lazy()
+        """Get the full computed data"""
         self._loaded = True
         # return self._data.compute().transpose(2, 1, 0)
         return self._data.compute()
 
     @property
     def dask_array(self):
-        """Get the full data as a dask array in original zarr order"""
+        """Get the full data as a dask array"""
         self._load_lazy()
         return self._data
+
+    def transpose(self, axes=(2, 1, 0)):
+        """
+        Transpose the data array and update relevant attributes.
+
+        Args:
+            axes (tuple): Tuple specifying the permutation of axes.
+                         Default (2, 1, 0) converts ZYX to XYZ order.
+
+        Returns:
+            self (for method chaining)
+        """
+
+        # Transpose the dask array
+        self._data = self._data.transpose(axes)
+
+        # Update shape and dimension attributes
+        self.shape = self._data.shape
+
+        # Update dimension order based on the transposition
+        if axes == (2, 1, 0):
+            # ZYX -> XYZ
+            self.x_dim, self.y_dim, self.z_dim = self.shape
+            self.dim_order = "XYZ"
+        elif axes == (0, 1, 2):
+            # Keep original ZYX order
+            self.z_dim, self.y_dim, self.x_dim = self.shape
+            self.dim_order = "ZYX"
+        elif axes == (1, 0, 2):
+            # ZYX -> YZX
+            self.y_dim, self.z_dim, self.x_dim = self.shape
+            self.dim_order = "YZX"
+        elif axes == (0, 2, 1):
+            # ZYX -> ZXY
+            self.z_dim, self.x_dim, self.y_dim = self.shape
+            self.dim_order = "ZXY"
+        elif axes == (1, 2, 0):
+            # ZYX -> YXZ
+            self.y_dim, self.x_dim, self.z_dim = self.shape
+            self.dim_order = "YXZ"
+        elif axes == (2, 0, 1):
+            # ZYX -> XZY
+            self.x_dim, self.z_dim, self.y_dim = self.shape
+            self.dim_order = "XZY"
+        else:
+            # Custom axes - update generically
+            self.z_dim, self.y_dim, self.x_dim = self.shape
+            self.dim_order = f"Custom{axes}"
+
+        if self.verbose:
+            print(f"Transposed data to shape {self.shape} with dimension order {self.dim_order}")
+
+        return self
 
     # @property
     # def data_raw(self):
