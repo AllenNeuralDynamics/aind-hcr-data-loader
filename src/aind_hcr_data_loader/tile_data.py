@@ -287,7 +287,6 @@ class TileData:
         Help to get estimates of where lots of signal is in the tile.
 
         """
-        level_to_use = level_to_use
         self.set_pyramid_level(level_to_use)
 
         # first load the data
