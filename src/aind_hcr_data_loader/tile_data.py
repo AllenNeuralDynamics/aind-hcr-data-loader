@@ -279,7 +279,7 @@ class TileData:
     def calculate_max_slice(self, level_to_use=2):
         """
 
-        Use pyramidal level 2 and calulate the mean of the slices in all 3 dimensions,
+        Use pyramidal level 2 and calculate the mean of the slices in all 3 dimensions,
         report back using the index for all pyramid levels.
 
         scale = int(2**pyramid_level)
