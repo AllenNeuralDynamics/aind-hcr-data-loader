@@ -17,8 +17,10 @@ readme = "README.md"
 dynamic = ["version"]
 
 dependencies = [
-    s3fs,
-    numpy
+    "s3fs",
+    "numpy",
+    "dask[array]",
+    "zarr"
 ]
 
 [project.optional-dependencies]

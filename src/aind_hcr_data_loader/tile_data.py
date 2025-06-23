@@ -1,5 +1,20 @@
+"""Tile data loading and manipulation utilities for HCR datasets."""
+
 import dask.array as da
 import numpy as np
+
+
+# add custom exceptions PyramidDoesNotExist
+class PyramidDoesNotExist(Exception):
+    """Exception raised when a requested pyramid level does not exist."""
+
+    def __init__(self, message):
+        """Initialize the exception with a message.
+
+        Args:
+            message (str): Error message describing the missing pyramid level.
+        """
+        super().__init__(message)
 
 
 class TileData:
@@ -10,7 +25,7 @@ class TileData:
     It provides methods to access data in different orientations (XY, ZY, ZX) and to perform projections.
     """
 
-    def __init__(self, tile_name, bucket_name, dataset_path, pyramid_level=0):
+    def __init__(self, tile_name, bucket_name, dataset_path, pyramid_level=0, verbose=False):
         """
         Initialize the TileData object.
 
@@ -26,6 +41,14 @@ class TileData:
         self.pyramid_level = pyramid_level
         self._data = None
         self._loaded = False
+        self.dim_order = None  # Original zarr dimension order
+        self.shape = None
+        self.z_dim = None
+        self.y_dim = None
+        self.x_dim = None
+        self.verbose = verbose
+
+        self.connect()
 
     def _load_lazy(self):
         """Lazily load the data as a dask array without computing"""
@@ -33,30 +56,39 @@ class TileData:
             tile_array_loc = f"{self.dataset_path}{self.tile_name}/{self.pyramid_level}"
             zarr_path = f"s3://{self.bucket_name}/{tile_array_loc}"
             self._data = da.from_zarr(url=zarr_path, storage_options={"anon": False}).squeeze()
-            self._loaded = True
-
-            # Store shape information
             self.shape = self._data.shape
-            # Assuming zarr is stored in (z,y,x) order
             self.z_dim, self.y_dim, self.x_dim = self.shape
+            self.dim_order = "ZYX"
+
+            if len(self.shape) != 3:
+                raise ValueError(
+                    f"Tile data for {self.tile_name} must have 3 dimensions (Z, Y, X), "
+                    f"got {len(self.shape)} dimensions instead."
+                )
+
+            print(
+                f"Loaded tile {self.tile_name} at pyramid level {self.pyramid_level} with shape {self.shape}"
+            )
 
     @property
     def data(self):
-        """Get the full computed data in (x,y,z) order"""
+        """Get the full computed data in (z,y,x) order"""
         self._load_lazy()
-        return self._data.compute().transpose(2, 1, 0)
-
-    @property
-    def data_raw(self):
-        """Get the full computed data in original (z,y,x) order"""
-        self._load_lazy()
+        self._loaded = True
+        # return self._data.compute().transpose(2, 1, 0)
         return self._data.compute()
 
     @property
     def dask_array(self):
-        """Get the underlying dask array without computing"""
+        """Get the full data as a dask array in original zarr order"""
         self._load_lazy()
         return self._data
+
+    # @property
+    # def data_raw(self):
+    #     """Get the full computed data in original zarr order """
+    #     self._load_lazy()
+    #     return self._data.compute()
 
     def connect(self):
         """Establish connection to the data source without computing"""
@@ -75,7 +107,6 @@ class TileData:
         Returns:
             2D numpy array or dask array
         """
-        self._load_lazy()
 
         if orientation == "xy":
             # XY slice at specific Z
@@ -112,7 +143,6 @@ class TileData:
         Returns:
             3D numpy array or dask array
         """
-        self._load_lazy()
 
         if axis == "z":
             if end > self.z_dim:
@@ -147,7 +177,6 @@ class TileData:
         Returns:
             2D numpy array or dask array
         """
-        self._load_lazy()
 
         # Set default range
         if start is None:
@@ -212,7 +241,6 @@ class TileData:
         Returns:
             dict with keys 'xy', 'zy', 'zx' containing the respective views
         """
-        self._load_lazy()
 
         # Use middle slices by default
         if z_index is None:
@@ -244,12 +272,14 @@ class TileData:
             # Clear loaded data so it will be reloaded at new pyramid level
             self._data = None
             self._loaded = False
+            # lazy load the new data
+            self._load_lazy()
         return self
 
     def calculate_max_slice(self, level_to_use=2):
         """
 
-        Use pyramidal level 3 and calulate the mean of the slices in all 3 dimensions,
+        Use pyramidal level 2 and calulate the mean of the slices in all 3 dimensions,
         report back using the index for all pyramid levels.
 
         scale = int(2**pyramid_level)
@@ -272,7 +302,7 @@ class TileData:
         max_slice_x = data.mean(axis=2)
         max_slice_x_index = np.unravel_index(max_slice_x.argmax(), max_slice_x.shape)
 
-        pyramid_levels = [0, 1, 2, 3]
+        pyramid_levels = [0, 1, 2, 3, 4, 5]
 
         max_slices[level_to_use] = {
             "z": int(max_slice_z_index[0]),
@@ -284,16 +314,20 @@ class TileData:
         pyramid_levels.remove(level_to_use)
 
         for level in pyramid_levels:
-            if level_to_use >= level:
-                scale_factor = 2 ** (level_to_use - level)
-            else:
-                print(f"level_to_use: {level_to_use}, level: {level}")
-                scale_factor = 1 / (2 ** (level - level_to_use))
-            max_slices[level] = {
-                "z": int(max_slice_z_index[0] * scale_factor),
-                "y": int(max_slice_y_index[0] * scale_factor),
-                "x": int(max_slice_x_index[0] * scale_factor),
-            }
+            try:
+                if level_to_use >= level:
+                    scale_factor = 2 ** (level_to_use - level)
+                else:
+                    print(f"level_to_use: {level_to_use}, level: {level}")
+                    scale_factor = 1 / (2 ** (level - level_to_use))
+                max_slices[level] = {
+                    "z": int(max_slice_z_index[0] * scale_factor),
+                    "y": int(max_slice_y_index[0] * scale_factor),
+                    "x": int(max_slice_x_index[0] * scale_factor),
+                }
+            except PyramidDoesNotExist:
+                # If the pyramid level does not exist, skip it
+                pass
 
         # sort keys by int value
         max_slices = dict(sorted(max_slices.items(), key=lambda item: int(item[0])))
