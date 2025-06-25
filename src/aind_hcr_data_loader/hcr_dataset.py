@@ -144,7 +144,8 @@ class HCRDataset:
 
         # Assert that all processing manifests exist
         for round_key, manifest in self.processing_manifests.items():
-            assert manifest is not None, f"Processing manifest for round {round_key} is None"
+            if manifest is None:
+                raise ValueError(f"Processing manifest for round {round_key} is None")
 
         if self.segmentation_files is None:
             self.segmentation_files = {}
