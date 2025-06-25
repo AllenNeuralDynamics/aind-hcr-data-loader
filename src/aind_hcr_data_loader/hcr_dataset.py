@@ -1107,7 +1107,8 @@ def get_processing_manifests(round_dict: dict, data_dir: Path):
     for key, folder in round_dict.items():
         manifest_path = data_dir / folder / "derived" / "processing_manifest.json"
 
-        assert manifest_path.exists(), f"Processing manifest not found at {manifest_path}"
+        if not manifest_path.exists():
+            raise FileNotFoundError(f"Processing manifest not found at {manifest_path}")
 
         processing_manifests[key] = load_processing_manifest(manifest_path)
 
