@@ -115,23 +115,35 @@ class HCRDataset:
     Unified data class that contains spot files, zarr files, and segmentation files for an HCR dataset.
     Provides convenient methods for accessing and working with the complete dataset.
     """
-
     spot_files: Dict[str, SpotFiles]
     zarr_files: Dict[str, ZarrDataFiles]
+    processing_manifests: Dict[str, dict]  # Added processing manifests for each round
     segmentation_files: Dict[str, SegmentationFiles] = None  # Added segmentation files
     spot_detection_files: Dict[str, Dict[str, SpotDetection]] = None  # Added spot detection files
+    dataset_names = None  
     mouse_id: str = None
     metadata: dict = None
+    
 
     def __post_init__(self):
         """Validate that rounds match and initialize segmentation files if not provided."""
         spot_rounds = set(self.spot_files.keys())
         zarr_rounds = set(self.zarr_files.keys())
+        manifest_rounds = set(self.processing_manifests.keys())
 
         if spot_rounds != zarr_rounds:
             print(
                 f"Warning: Rounds don't match between spot files {spot_rounds} and zarr files {zarr_rounds}"
             )
+
+        if spot_rounds != manifest_rounds:
+            print(
+                f"Warning: Rounds don't match between spot files {spot_rounds} and processing manifests {manifest_rounds}"
+            )
+
+        # Assert that all processing manifests exist
+        for round_key, manifest in self.processing_manifests.items():
+            assert manifest is not None, f"Processing manifest for round {round_key} is None"
 
         if self.segmentation_files is None:
             self.segmentation_files = {}
@@ -298,7 +310,7 @@ class HCRDataset:
 
     def create_channel_gene_table(self, spots_only=True):
         """Create channel-gene mapping table from processing manifests."""
-        return create_channel_gene_table(self.spot_files, spots_only=spots_only)
+        return create_channel_gene_table_from_manifests(self.processing_manifests, spots_only=spots_only)
 
     def get_segmentation_resolutions(self, round_key=None):
         """
@@ -484,6 +496,7 @@ def create_hcr_dataset(round_dict: dict, data_dir: Path, mouse_id: str = None):
     """
     spot_files = get_spot_files(round_dict, data_dir)
     zarr_files = get_zarr_files(round_dict, data_dir)
+    processing_manifests = get_processing_manifests(round_dict, data_dir)  # Added processing manifests
     segmentation_files = get_segmentation_files(round_dict, data_dir)  # Added segmentation files
     spot_detection_files = get_spot_detection_files(
         round_dict, data_dir
@@ -500,6 +513,7 @@ def create_hcr_dataset(round_dict: dict, data_dir: Path, mouse_id: str = None):
     return HCRDataset(
         spot_files=spot_files,
         zarr_files=zarr_files,
+        processing_manifests=processing_manifests,
         segmentation_files=segmentation_files,
         spot_detection_files=spot_detection_files,
         mouse_id=mouse_id,
@@ -706,6 +720,51 @@ def create_channel_gene_table(spot_files: dict, spots_only=True) -> pd.DataFrame
     for entry in data:
         if entry["Gene"] in [d["Gene"] for d in data if d["Round"] != entry["Round"]]:
             entry["Gene"] += f"-{entry['Round']}"
+    return pd.DataFrame(data)
+
+
+def create_channel_gene_table_from_manifests(processing_manifests: Dict[str, dict], spots_only=True) -> pd.DataFrame:
+    """
+    Create a table of Channel, Gene, and Round from the "gene_dict" key in the processing manifests for each round.
+
+    Parameters:
+    -----------
+    processing_manifests : Dict[str, dict]
+        Dictionary mapping round keys to processing manifest dictionaries.
+    spots_only : bool, optional
+        If True, exclude Channel=405 and Gene=Syto59 entries (default: True)
+
+    Returns:
+    --------
+    pd.DataFrame
+        DataFrame containing columns: Channel, Gene, and Round.
+    """
+    data = []
+
+    for round_key, manifest in processing_manifests.items():
+        gene_dict = manifest.get("gene_dict", {})
+
+        for channel, details in gene_dict.items():
+            data.append(
+                {"Channel": channel, "Gene": details.get("gene", ""), "Round": round_key}
+            )
+
+    # Sort by round then channel
+    data.sort(key=lambda x: (x["Round"], x["Channel"]))
+
+    if spots_only:
+        # Drop Channel = 405 and Gene = Syto59
+        data = [
+            entry
+            for entry in data
+            if not (entry["Channel"] == "405" and entry["Gene"] == "Syto59")
+        ]
+    
+    # For duplicate genes, append the round name to the gene
+    for entry in data:
+        if entry["Gene"] in [d["Gene"] for d in data if d["Round"] != entry["Round"]]:
+            entry["Gene"] += f"-{entry['Round']}"
+    
     return pd.DataFrame(data)
 
 
@@ -1014,3 +1073,36 @@ def load_processing_manifest(manifest_path: Path) -> dict:
     """
     with open(manifest_path, "r") as file:
         return json.load(file)
+
+
+def get_processing_manifests(round_dict: dict, data_dir: Path):
+    """
+    Get processing manifests for each round based on a dictionary mapping round keys to folder names.
+    
+    Parameters:
+    -----------
+    round_dict : dict
+        Dictionary mapping round keys (e.g., 'R1', 'R2') to folder names containing the data.
+    data_dir : Path
+        Path to the directory containing the round folders.
+        
+    Returns:
+    --------
+    dict
+        Dictionary mapping round keys to loaded processing manifest dictionaries.
+        
+    Raises:
+    -------
+    AssertionError
+        If any processing manifest is not found
+    """
+    processing_manifests = {}
+    
+    for key, folder in round_dict.items():
+        manifest_path = data_dir / folder / "derived" / "processing_manifest.json"
+        
+        assert manifest_path.exists(), f"Processing manifest not found at {manifest_path}"
+        
+        processing_manifests[key] = load_processing_manifest(manifest_path)
+    
+    return processing_manifests

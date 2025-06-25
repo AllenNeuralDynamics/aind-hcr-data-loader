@@ -20,7 +20,7 @@ dependencies = [
     "s3fs",
     "numpy",
     "dask[array]",
-    "zarr"
+    "zarr",
 ]
 
 [project.optional-dependencies]
