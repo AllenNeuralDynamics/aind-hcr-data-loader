@@ -248,6 +248,8 @@ class HCRDataset:
             Loaded zarr array
         """
         import zarr
+        # import dask array
+        import dask.array as da
 
         # make py level int
         pyramid_level = int(pyramid_level)
@@ -270,7 +272,11 @@ class HCRDataset:
             )
 
         zarr_path = data_dict[channel]
-        return zarr.open(zarr_path, mode="r")[pyramid_level]
+        # Open zarr array at specified pyramid level
+        zarr_array = zarr.open(zarr_path, mode="r")[pyramid_level]
+        # Convert to dask array for efficient chunked computation 
+        dask_array = da.from_array(zarr_array, chunks=zarr_array.chunks)
+        return dask_array
 
     # WIP: need to make parquet conversion first
     # def query_spots(self, round_key, cell_ids, spot_type='mixed', columns=None):
