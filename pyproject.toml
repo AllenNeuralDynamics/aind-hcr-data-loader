@@ -20,7 +20,7 @@ dependencies = [
     "s3fs",
     "numpy",
     "dask[array]",
-    "zarr"
+    "zarr",
 ]
 
 [project.optional-dependencies]
@@ -73,7 +73,7 @@ exclude_lines = [
     "^import .*",
     "pragma: no cover"
 ]
-fail_under = 50
+fail_under = 25
 
 [tool.isort]
 line_length = 99

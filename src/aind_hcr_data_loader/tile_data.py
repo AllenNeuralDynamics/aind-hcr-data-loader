@@ -384,3 +384,292 @@ class TileData:
         max_slices = dict(sorted(max_slices.items(), key=lambda item: int(item[0])))
 
         return max_slices
+
+    def _check_compatibility(self, other):
+        """
+        Check if two TileData objects are compatible for arithmetic operations.
+
+        Args:
+            other: Another TileData object
+
+        Raises:
+            ValueError: If the objects are not compatible
+        """
+        if not isinstance(other, TileData):
+            raise TypeError(
+                f"Cannot perform operation with {type(other)}. Expected TileData object."
+            )
+
+        # Check if both objects are loaded
+        if not self._loaded:
+            self._load_lazy()
+        if not other._loaded:
+            other._load_lazy()
+
+        # Check shapes
+        if self.shape != other.shape:
+            raise ValueError(f"Shape mismatch: {self.shape} vs {other.shape}")
+
+        # Check dimension order
+        if self.dim_order != other.dim_order:
+            raise ValueError(f"Dimension order mismatch: {self.dim_order} vs {other.dim_order}")
+
+        # Check all dimension attributes
+        if self.z_dim != other.z_dim or self.y_dim != other.y_dim or self.x_dim != other.x_dim:
+            raise ValueError(
+                f"Dimension mismatch: "
+                f"Z({self.z_dim} vs {other.z_dim}), "
+                f"Y({self.y_dim} vs {other.y_dim}), "
+                f"X({self.x_dim} vs {other.x_dim})"
+            )
+
+    def __add__(self, other):
+        """
+        Add two TileData objects element-wise.
+
+        Args:
+            other: Another TileData object or scalar
+
+        Returns:
+            New TileData object with the sum
+        """
+        if isinstance(other, (int, float)):
+            # Scalar addition
+            result = self._create_copy()
+            result._data = self._data + other
+            return result
+
+        self._check_compatibility(other)
+
+        # Create a new TileData object with the same metadata
+        result = self._create_copy()
+        result._data = self._data + other._data
+
+        return result
+
+    def __sub__(self, other):
+        """
+        Subtract two TileData objects element-wise.
+
+        Args:
+            other: Another TileData object or scalar
+
+        Returns:
+            New TileData object with the difference
+        """
+        if isinstance(other, (int, float)):
+            # Scalar subtraction
+            result = self._create_copy()
+            result._data = self._data - other
+            return result
+
+        self._check_compatibility(other)
+
+        # Create a new TileData object with the same metadata
+        result = self._create_copy()
+        result._data = self._data - other._data
+
+        return result
+
+    def __mul__(self, other):
+        """
+        Multiply two TileData objects element-wise or by a scalar.
+
+        Args:
+            other: Another TileData object or scalar
+
+        Returns:
+            New TileData object with the product
+        """
+        if isinstance(other, (int, float)):
+            # Scalar multiplication
+            result = self._create_copy()
+            result._data = self._data * other
+            return result
+
+        self._check_compatibility(other)
+
+        # Create a new TileData object with the same metadata
+        result = self._create_copy()
+        result._data = self._data * other._data
+
+        return result
+
+    def __truediv__(self, other):
+        """
+        Divide two TileData objects element-wise or by a scalar.
+
+        Args:
+            other: Another TileData object or scalar
+
+        Returns:
+            New TileData object with the quotient
+        """
+        if isinstance(other, (int, float)):
+            # Scalar division
+            result = self._create_copy()
+            result._data = self._data / other
+            return result
+
+        self._check_compatibility(other)
+
+        # Create a new TileData object with the same metadata
+        result = self._create_copy()
+        result._data = self._data / other._data
+
+        return result
+
+    def __iadd__(self, other):
+        """
+        In-place addition.
+
+        Args:
+            other: Another TileData object or scalar
+
+        Returns:
+            Self (modified in place)
+        """
+        if isinstance(other, (int, float)):
+            # Scalar addition
+            self._data = self._data + other
+            return self
+
+        self._check_compatibility(other)
+        self._data = self._data + other._data
+        return self
+
+    def __isub__(self, other):
+        """
+        In-place subtraction.
+
+        Args:
+            other: Another TileData object or scalar
+
+        Returns:
+            Self (modified in place)
+        """
+        if isinstance(other, (int, float)):
+            # Scalar subtraction
+            self._data = self._data - other
+            return self
+
+        self._check_compatibility(other)
+        self._data = self._data - other._data
+        return self
+
+    def __imul__(self, other):
+        """
+        In-place multiplication.
+
+        Args:
+            other: Another TileData object or scalar
+
+        Returns:
+            Self (modified in place)
+        """
+        if isinstance(other, (int, float)):
+            # Scalar multiplication
+            self._data = self._data * other
+            return self
+
+        self._check_compatibility(other)
+        self._data = self._data * other._data
+        return self
+
+    def __itruediv__(self, other):
+        """
+        In-place division.
+
+        Args:
+            other: Another TileData object or scalar
+
+        Returns:
+            Self (modified in place)
+        """
+        if isinstance(other, (int, float)):
+            # Scalar division
+            self._data = self._data / other
+            return self
+
+        self._check_compatibility(other)
+        self._data = self._data / other._data
+        return self
+
+    def _create_copy(self):
+        """
+        Create a copy of this TileData object with the same metadata but no data loaded.
+
+        Returns:
+            New TileData object with same metadata
+        """
+        # Create a new object without calling __init__ to avoid S3 loading
+        copy_obj = TileData.__new__(TileData)
+
+        # Copy all attributes
+        copy_obj.tile_name = self.tile_name
+        copy_obj.bucket_name = self.bucket_name
+        copy_obj.dataset_path = self.dataset_path
+        copy_obj.pyramid_level = self.pyramid_level
+        copy_obj.verbose = self.verbose
+        copy_obj.shape = self.shape
+        copy_obj.z_dim = self.z_dim
+        copy_obj.y_dim = self.y_dim
+        copy_obj.x_dim = self.x_dim
+        copy_obj.dim_order = self.dim_order
+        copy_obj._loaded = True
+        copy_obj._data = None  # Will be set by the calling method
+
+        return copy_obj
+
+    def average(self, other):
+        """
+        Compute the element-wise average of two TileData objects.
+
+        Args:
+            other: Another TileData object
+
+        Returns:
+            New TileData object with the average
+        """
+        return (self + other) / 2
+
+    def sum_with(self, other):
+        """
+        Compute the element-wise sum of two TileData objects.
+
+        Args:
+            other: Another TileData object
+
+        Returns:
+            New TileData object with the sum
+        """
+        return self + other
+
+    def difference(self, other):
+        """
+        Compute the element-wise difference of two TileData objects.
+
+        Args:
+            other: Another TileData object
+
+        Returns:
+            New TileData object with the difference (self - other)
+        """
+        return self - other
+
+    def abs_difference(self, other):
+        """
+        Compute the element-wise absolute difference of two TileData objects.
+
+        Args:
+            other: Another TileData object
+
+        Returns:
+            New TileData object with the absolute difference
+        """
+        self._check_compatibility(other)
+
+        result = self._create_copy()
+        result._data = da.abs(self._data - other._data)
+
+        return result
