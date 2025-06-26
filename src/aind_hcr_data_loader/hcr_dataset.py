@@ -247,9 +247,9 @@ class HCRDataset:
         zarr.Array
             Loaded zarr array
         """
-        import zarr
         # import dask array
         import dask.array as da
+        import zarr
 
         # make py level int
         pyramid_level = int(pyramid_level)
@@ -274,7 +274,7 @@ class HCRDataset:
         zarr_path = data_dict[channel]
         # Open zarr array at specified pyramid level
         zarr_array = zarr.open(zarr_path, mode="r")[pyramid_level]
-        # Convert to dask array for efficient chunked computation 
+        # Convert to dask array for efficient chunked computation
         dask_array = da.from_array(zarr_array, chunks=zarr_array.chunks)
         return dask_array
 
