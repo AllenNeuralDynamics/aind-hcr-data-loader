@@ -121,6 +121,7 @@ class HCRRound:
         spot_files: SpotFiles,
         zarr_files: ZarrDataFiles,
         processing_manifest: dict,
+        name: str = None,
         segmentation_files: SegmentationFiles = None,
         spot_detection_files: Dict[str, SpotDetection] = None,
     ):
@@ -137,12 +138,15 @@ class HCRRound:
             Zarr files for this round
         processing_manifest : dict
             Processing manifest data for this round
+        name : str, optional
+            Dataset name for this round
         segmentation_files : SegmentationFiles, optional
             Segmentation files for this round
         spot_detection_files : Dict[str, SpotDetection], optional
             Spot detection files for this round, mapping channel to SpotDetection
         """
         self.round_key = round_key
+        self.name = name
         self.spot_files = spot_files
         self.zarr_files = zarr_files
         self.processing_manifest = processing_manifest
@@ -283,6 +287,7 @@ class HCRRound:
         # Public attributes specific to HCRRound
         round_attrs = [
             "round_key",
+            "name",
             "spot_files",
             "zarr_files",
             "processing_manifest",
@@ -308,8 +313,9 @@ class HCRRound:
         """Return a string representation of the HCRRound object."""
         channels = self.get_channels()
         seg_resolutions = self.get_segmentation_resolutions()
+        name_str = f", name='{self.name}'" if self.name else ""
         return (
-            f"HCRRound(round_key='{self.round_key}', "
+            f"HCRRound(round_key='{self.round_key}'{name_str}, "
             f"channels={channels}, "
             f"segmentation_resolutions={seg_resolutions})"
         )
@@ -789,9 +795,10 @@ def create_hcr_dataset(round_dict: dict, data_dir: Path, mouse_id: str = None):
 
     # Create HCRRound objects
     rounds = {}
-    for round_key in round_dict.keys():
+    for round_key, folder_name in round_dict.items():
         rounds[round_key] = HCRRound(
             round_key=round_key,
+            name=folder_name,
             spot_files=spot_files[round_key],
             zarr_files=zarr_files[round_key],
             processing_manifest=processing_manifests.get(round_key, {}),
