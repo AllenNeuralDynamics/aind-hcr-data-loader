@@ -52,9 +52,9 @@ class ZarrDataFiles:
     Data class to hold paths to Zarr data files for fused, corrected, and raw datasets.
     """
 
-    fused: Dict[str, Path]  # Dictionary mapping channel names to fused zarr paths
-    corrected: Dict[str, Path] = None  # Dictionary mapping channel names to corrected zarr paths
-    raw: Dict[str, Path] = None  # Dictionary mapping channel names to raw zarr paths
+    fused: Dict[str, Path]
+    corrected: Dict[str, Path] = None
+    raw: Dict[str, Path] = None
 
     def __post_init__(self):
         """Initialize empty dictionaries for corrected and raw if not provided."""
@@ -81,7 +81,7 @@ class SpotDetection:
 
     channel: str
     spots_file: Path
-    stats_files: dict  # Maps comparison channel to stats file path
+    stats_files: dict
 
 
 @dataclass
@@ -109,53 +109,261 @@ class SegmentationFiles:
         return resolution_key in self.segmentation_masks
 
 
-@dataclass
+class HCRRound:
+    """
+    A class representing a single round of HCR data, containing all associated files and methods
+    for working with that round's data.
+    """
+
+    def __init__(
+        self,
+        round_key: str,
+        spot_files: SpotFiles,
+        zarr_files: ZarrDataFiles,
+        processing_manifest: dict,
+        segmentation_files: SegmentationFiles = None,
+        spot_detection_files: Dict[str, SpotDetection] = None,
+    ):
+        """
+        Initialize an HCRRound object.
+
+        Parameters:
+        -----------
+        round_key : str
+            The identifier for this round (e.g., 'R1', 'R2')
+        spot_files : SpotFiles
+            Spot files for this round
+        zarr_files : ZarrDataFiles
+            Zarr files for this round
+        processing_manifest : dict
+            Processing manifest data for this round
+        segmentation_files : SegmentationFiles, optional
+            Segmentation files for this round
+        spot_detection_files : Dict[str, SpotDetection], optional
+            Spot detection files for this round, mapping channel to SpotDetection
+        """
+        self.round_key = round_key
+        self.spot_files = spot_files
+        self.zarr_files = zarr_files
+        self.processing_manifest = processing_manifest
+        self.segmentation_files = segmentation_files
+        self.spot_detection_files = spot_detection_files or {}
+
+    def get_channels(self):
+        """Get list of available channels for this round."""
+        return self.zarr_files.get_channels()
+
+    def has_channel(self, channel):
+        """Check if a specific channel exists in this round."""
+        return self.zarr_files.has_channel(channel)
+
+    def load_zarr_channel(self, channel, data_type="fused", pyramid_level=0):
+        """
+        Load a specific channel's zarr data for this round.
+
+        Parameters:
+        -----------
+        channel : str
+            Channel identifier
+        data_type : str
+            Type of data ('fused', 'corrected', 'raw')
+        pyramid_level : int
+            Pyramid level (0-5), appended to zarr path
+
+        Returns:
+        --------
+        dask.array.Array
+            Loaded zarr array as dask array
+        """
+        import dask.array as da
+        import zarr
+
+        # make py level int
+        pyramid_level = int(pyramid_level)
+
+        data_dict = getattr(self.zarr_files, data_type)
+
+        if channel not in data_dict:
+            raise ValueError(
+                f"Channel {channel} not found in {data_type} data for round {self.round_key}"
+            )
+
+        # Validate pyramid level
+        if not isinstance(pyramid_level, int) or pyramid_level < 0 or pyramid_level > 5:
+            raise ValueError(
+                f"Pyramid level must be an integer between 0 and 5, got {pyramid_level}"
+            )
+
+        zarr_path = data_dict[channel]
+        # Open zarr array at specified pyramid level
+        zarr_array = zarr.open(zarr_path, mode="r")[pyramid_level]
+        # Convert to dask array for efficient chunked computation
+        dask_array = da.from_array(zarr_array, chunks=zarr_array.chunks)
+        return dask_array
+
+    def get_segmentation_resolutions(self):
+        """Get available segmentation resolutions for this round."""
+        if self.segmentation_files is None:
+            return []
+        return self.segmentation_files.get_resolutions()
+
+    def load_segmentation_mask(self, resolution_key="0"):
+        """
+        Load segmentation mask for this round at specified resolution.
+
+        Parameters:
+        -----------
+        resolution_key : str
+            Resolution identifier ('0' for segmentation_mask.zarr, '2' for segmentation_mask_orig_res.zarr)
+
+        Returns:
+        --------
+        zarr.Array
+            Loaded segmentation mask
+        """
+        import zarr
+
+        if self.segmentation_files is None:
+            raise ValueError(f"No segmentation files available for round {self.round_key}")
+
+        if resolution_key not in self.segmentation_files.segmentation_masks:
+            valid_keys = ", ".join(self.segmentation_files.get_resolutions())
+            raise ValueError(
+                f"Resolution {resolution_key} not found for round {self.round_key}, valid keys are: {valid_keys}"
+            )
+
+        mask_path = self.segmentation_files.segmentation_masks[resolution_key]
+        return zarr.open(mask_path, mode="r")["0"]
+
+    def load_cell_centroids(self):
+        """
+        Load cell centroids for this round.
+
+        Returns:
+        --------
+        numpy.ndarray
+            Array of cell centroids
+        """
+        if self.segmentation_files is None:
+            raise ValueError(f"No segmentation files available for round {self.round_key}")
+
+        if (
+            self.segmentation_files.cell_centroids is None
+            or not self.segmentation_files.cell_centroids.exists()
+        ):
+            raise ValueError(f"Cell centroids file not found for round {self.round_key}")
+
+        return np.load(self.segmentation_files.cell_centroids)
+
+    def get_cell_info(self):
+        """
+        Get cell information for this round.
+
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing cell_id, volume, and centroid coordinates
+        """
+        # Read data for this round
+        df = pd.read_csv(self.spot_files.unmixed_cxg)
+
+        # Keep only the columns we want
+        cols_to_keep = ["cell_id", "volume", "x_centroid", "y_centroid", "z_centroid"]
+        df_cells = df[cols_to_keep].drop_duplicates()
+
+        return df_cells
+
+    def __dir__(self):
+        """
+        Return a list of valid attributes and methods for this HCRRound.
+
+        This enables better tab completion and introspection.
+        Excludes dunder methods and separates attributes from methods.
+        """
+        # Public attributes specific to HCRRound
+        round_attrs = [
+            "round_key",
+            "spot_files",
+            "zarr_files",
+            "processing_manifest",
+            "segmentation_files",
+            "spot_detection_files",
+        ]
+
+        # Public methods specific to HCRRound
+        round_methods = [
+            "get_channels",
+            "has_channel",
+            "load_zarr_channel",
+            "get_segmentation_resolutions",
+            "load_segmentation_mask",
+            "load_cell_centroids",
+            "get_cell_info",
+        ]
+
+        # Combine attributes first, then methods for organized display
+        return round_attrs + round_methods
+
+    def __repr__(self):
+        """Return a string representation of the HCRRound object."""
+        channels = self.get_channels()
+        seg_resolutions = self.get_segmentation_resolutions()
+        return (
+            f"HCRRound(round_key='{self.round_key}', "
+            f"channels={channels}, "
+            f"segmentation_resolutions={seg_resolutions})"
+        )
+
+
 class HCRDataset:
     """
-    Unified data class that contains spot files, zarr files, and segmentation files for an HCR dataset.
+    Unified class that contains HCRRound objects for an HCR dataset.
     Provides convenient methods for accessing and working with the complete dataset.
     """
 
-    spot_files: Dict[str, SpotFiles]
-    zarr_files: Dict[str, ZarrDataFiles]
-    processing_manifests: Dict[str, dict]  # Added processing manifests for each round
-    segmentation_files: Dict[str, SegmentationFiles] = None  # Added segmentation files
-    spot_detection_files: Dict[str, Dict[str, SpotDetection]] = None  # Added spot detection files
-    dataset_names = None
-    mouse_id: str = None
-    metadata: dict = None
+    def __init__(
+        self,
+        rounds: Dict[str, HCRRound] = None,
+        mouse_id: str = None,
+        metadata: dict = None,
+        dataset_names=None,
+    ):
+        """
+        Initialize HCRDataset.
 
-    def __post_init__(self):
-        """Validate that rounds match and initialize segmentation files if not provided."""
-        spot_rounds = set(self.spot_files.keys())
-        zarr_rounds = set(self.zarr_files.keys())
-        manifest_rounds = set(self.processing_manifests.keys())
+        Parameters:
+        -----------
+        rounds : Dict[str, HCRRound], optional
+            Dictionary mapping round keys to HCRRound objects
+        mouse_id : str, optional
+            Mouse ID for metadata
+        metadata : dict, optional
+            Additional metadata
+        dataset_names : optional
+            Dataset names (for backward compatibility)
+        """
+        self.mouse_id = mouse_id
+        self.metadata = metadata
+        self.dataset_names = dataset_names
 
-        if spot_rounds != zarr_rounds:
-            print(
-                f"Warning: Rounds don't match between spot files {spot_rounds} and zarr files {zarr_rounds}"
-            )
+        # Initialize rounds
+        self.rounds = rounds or {}
 
-        if spot_rounds != manifest_rounds:
-            print(
-                f"Warning: Rounds don't match between spot files {spot_rounds} "
-                f"and processing manifests {manifest_rounds}"
-            )
+        self._validate_rounds()
 
-        # Assert that all processing manifests exist
-        for round_key, manifest in self.processing_manifests.items():
-            if manifest is None:
-                raise ValueError(f"Processing manifest for round {round_key} is None")
+    def _validate_rounds(self):
+        """Validate that rounds have consistent data."""
+        if not self.rounds:
+            return
 
-        if self.segmentation_files is None:
-            self.segmentation_files = {}
-
-        if self.spot_detection_files is None:
-            self.spot_detection_files = {}
+        # Check for missing processing manifests
+        for round_key, round_obj in self.rounds.items():
+            if round_obj.processing_manifest is None:
+                print(f"Warning: Processing manifest for round {round_key} is None")
 
     def get_rounds(self):
         """Get list of available rounds."""
-        return list(self.spot_files.keys())
+        return list(self.rounds.keys())
 
     def get_channels(self, round_key=None):
         """
@@ -172,15 +380,15 @@ class HCRDataset:
             List of channels for specific round, or dict mapping rounds to channel lists
         """
         if round_key:
-            if round_key not in self.zarr_files:
+            if round_key not in self.rounds:
                 raise ValueError(f"Round {round_key} not found")
-            return self.zarr_files[round_key].get_channels()
+            return self.rounds[round_key].get_channels()
         else:
-            return {k: v.get_channels() for k, v in self.zarr_files.items()}
+            return {k: round_obj.get_channels() for k, round_obj in self.rounds.items()}
 
     def has_round(self, round_key):
         """Check if dataset contains a specific round."""
-        return round_key in self.spot_files and round_key in self.zarr_files
+        return round_key in self.rounds
 
     def get_cell_info(self, round_key="R1"):
         """
@@ -196,12 +404,10 @@ class HCRDataset:
         pd.DataFrame
             DataFrame containing cell_id, volume, and centroid coordinates
         """
-        if round_key not in self.spot_files:
-            raise ValueError(f"Round {round_key} not found in spot files")
+        if round_key not in self.rounds:
+            raise ValueError(f"Round {round_key} not found")
 
-        # Use existing function but pass just the relevant round
-        round_spot_files = {round_key: self.spot_files[round_key]}
-        return get_cell_info_r1(round_spot_files, round_key=round_key)
+        return self.rounds[round_key].get_cell_info()
 
     def create_cell_gene_matrix(self, unmixed=True, rounds=None):
         """
@@ -220,11 +426,66 @@ class HCRDataset:
             Cell-gene matrix
         """
         if rounds is None:
-            rounds_to_use = self.spot_files
+            spot_files = {k: round_obj.spot_files for k, round_obj in self.rounds.items()}
         else:
-            rounds_to_use = {k: v for k, v in self.spot_files.items() if k in rounds}
+            spot_files = {k: self.rounds[k].spot_files for k in rounds if k in self.rounds}
 
-        return create_cell_gene_matrix(rounds_to_use, unmixed=unmixed)
+        # Load all dataframes once and identify duplicates
+        all_genes_by_round = {}
+        dataframes = {}  # Store dataframes to avoid re-reading
+
+        for round_key in spot_files.keys():
+            if unmixed:
+                # Read the unmixed cell-by-gene data
+                df = pd.read_csv(spot_files[round_key].unmixed_cxg)
+            else:
+                df = pd.read_csv(spot_files[round_key].mixed_cxg)
+
+            # Store the dataframe and genes for this round
+            dataframes[round_key] = df
+            all_genes_by_round[round_key] = set(df["gene"].unique())
+            print(f"Round {round_key} has these genes: {df['gene'].unique()}")
+
+        # Find genes that appear in multiple rounds
+        all_genes = set()
+        for genes in all_genes_by_round.values():
+            all_genes.update(genes)
+
+        duplicate_genes = set()
+        for gene in all_genes:
+            rounds_with_gene = [
+                round_key for round_key, genes in all_genes_by_round.items() if gene in genes
+            ]
+            if len(rounds_with_gene) > 1:
+                duplicate_genes.add(gene)
+                print(f"Gene '{gene}' appears in rounds: {', '.join(rounds_with_gene)}")
+        print(f"Total duplicate genes found: {len(duplicate_genes)}")
+
+        # Process dataframes with appropriate gene naming
+        all_rounds_data = []
+
+        for round_key, df in dataframes.items():
+            # Create a proper copy to avoid SettingWithCopyWarning
+            df_processed = df[["cell_id", "gene", "spot_count"]].copy()
+
+            # Only append round name for genes that appear in multiple rounds
+            df_processed.loc[:, "gene"] = df_processed["gene"].apply(
+                lambda x: f"{x}_{round_key}" if x in duplicate_genes else x
+            )
+
+            # Append to list
+            all_rounds_data.append(df_processed)
+
+        # Concatenate all rounds
+        stacked_df = pd.concat(all_rounds_data, ignore_index=True)
+
+        # Pivot to get cell_id as index and genes as columns
+        pivot_df = stacked_df.pivot(index="cell_id", columns="gene", values="spot_count")
+
+        # Fill NaN values with 0 (genes not detected in certain cells)
+        pivot_df = pivot_df.fillna(0)
+
+        return pivot_df
 
     # TODO: may need dask?
     def load_zarr_channel(self, round_key, channel, data_type="fused", pyramid_level=0):
@@ -244,39 +505,13 @@ class HCRDataset:
 
         Returns:
         --------
-        zarr.Array
-            Loaded zarr array
+        dask.array.Array
+            Loaded zarr array as dask array
         """
-        # import dask array
-        import dask.array as da
-        import zarr
-
-        # make py level int
-        pyramid_level = int(pyramid_level)
-
-        if round_key not in self.zarr_files:
+        if round_key not in self.rounds:
             raise ValueError(f"Round {round_key} not found")
 
-        files = self.zarr_files[round_key]
-        data_dict = getattr(files, data_type)
-
-        if channel not in data_dict:
-            raise ValueError(
-                f"Channel {channel} not found in {data_type} data for round {round_key}"
-            )
-
-        # Validate pyramid level
-        if not isinstance(pyramid_level, int) or pyramid_level < 0 or pyramid_level > 5:
-            raise ValueError(
-                f"Pyramid level must be an integer between 0 and 5, got {pyramid_level}"
-            )
-
-        zarr_path = data_dict[channel]
-        # Open zarr array at specified pyramid level
-        zarr_array = zarr.open(zarr_path, mode="r")[pyramid_level]
-        # Convert to dask array for efficient chunked computation
-        dask_array = da.from_array(zarr_array, chunks=zarr_array.chunks)
-        return dask_array
+        return self.rounds[round_key].load_zarr_channel(channel, data_type, pyramid_level)
 
     # WIP: need to make parquet conversion first
     # def query_spots(self, round_key, cell_ids, spot_type='mixed', columns=None):
@@ -318,8 +553,11 @@ class HCRDataset:
 
     def create_channel_gene_table(self, spots_only=True):
         """Create channel-gene mapping table from processing manifests."""
+        processing_manifests = {
+            k: round_obj.processing_manifest for k, round_obj in self.rounds.items()
+        }
         return create_channel_gene_table_from_manifests(
-            self.processing_manifests, spots_only=spots_only
+            processing_manifests, spots_only=spots_only
         )
 
     def get_segmentation_resolutions(self, round_key=None):
@@ -337,11 +575,13 @@ class HCRDataset:
             List of resolution keys for specific round, or dict mapping rounds to resolution lists
         """
         if round_key:
-            if round_key not in self.segmentation_files:
+            if round_key not in self.rounds:
                 return []
-            return self.segmentation_files[round_key].get_resolutions()
+            return self.rounds[round_key].get_segmentation_resolutions()
         else:
-            return {k: v.get_resolutions() for k, v in self.segmentation_files.items()}
+            return {
+                k: round_obj.get_segmentation_resolutions() for k, round_obj in self.rounds.items()
+            }
 
     def load_segmentation_mask(self, round_key, resolution_key="0"):
         """
@@ -359,22 +599,10 @@ class HCRDataset:
         zarr.Array
             Loaded segmentation mask
         """
-        import zarr
+        if round_key not in self.rounds:
+            raise ValueError(f"Round {round_key} not found")
 
-        if round_key not in self.segmentation_files:
-            raise ValueError(f"Round {round_key} not found in segmentation files")
-
-        seg_files = self.segmentation_files[round_key]
-
-        if resolution_key not in seg_files.segmentation_masks:
-            # valid keys
-            valid_keys = ", ".join(seg_files.get_resolutions())
-            raise ValueError(
-                f"Resolution {resolution_key} not found for round {round_key}, valid keys are: {valid_keys}"
-            )
-
-        mask_path = seg_files.segmentation_masks[resolution_key]
-        return zarr.open(mask_path, mode="r")["0"]
+        return self.rounds[round_key].load_segmentation_mask(resolution_key)
 
     def load_cell_centroids(self, round_key):
         """
@@ -390,15 +618,10 @@ class HCRDataset:
         numpy.ndarray
             Array of cell centroids
         """
-        if round_key not in self.segmentation_files:
-            raise ValueError(f"Round {round_key} not found in segmentation files")
+        if round_key not in self.rounds:
+            raise ValueError(f"Round {round_key} not found")
 
-        seg_files = self.segmentation_files[round_key]
-
-        if seg_files.cell_centroids is None or not seg_files.cell_centroids.exists():
-            raise ValueError(f"Cell centroids file not found for round {round_key}")
-
-        return np.load(seg_files.cell_centroids)
+        return self.rounds[round_key].load_cell_centroids()
 
     def _print_basic_info(self):
         """Print basic dataset information."""
@@ -413,25 +636,36 @@ class HCRDataset:
 
     def _print_segmentation_info(self):
         """Print segmentation file information."""
-        if not self.segmentation_files:
+        segmentation_rounds = {
+            k: round_obj
+            for k, round_obj in self.rounds.items()
+            if round_obj.segmentation_files is not None
+        }
+        if not segmentation_rounds:
             return
         print("\nSegmentation files by round:")
-        for round_key, seg_files in self.segmentation_files.items():
-            resolutions = seg_files.get_resolutions()
-            centroids_exist = seg_files.cell_centroids and seg_files.cell_centroids.exists()
+        for round_key, round_obj in segmentation_rounds.items():
+            resolutions = round_obj.get_segmentation_resolutions()
+            centroids_exist = (
+                round_obj.segmentation_files.cell_centroids
+                and round_obj.segmentation_files.cell_centroids.exists()
+            )
             print(
                 f"  {round_key}: resolutions {', '.join(resolutions)}, centroids: {'✓' if centroids_exist else '✗'}"
             )
 
     def _print_spot_detection_info(self):
         """Print spot detection information."""
-        if not self.spot_detection_files:
+        detection_rounds = {
+            k: round_obj for k, round_obj in self.rounds.items() if round_obj.spot_detection_files
+        }
+        if not detection_rounds:
             return
         print("\nSpot detection files by round:")
-        for round_key, spot_detections in self.spot_detection_files.items():
-            channels = list(spot_detections.keys())
+        for round_key, round_obj in detection_rounds.items():
+            channels = list(round_obj.spot_detection_files.keys())
             print(f"  {round_key}: channels {', '.join(channels)}")
-            for channel, spot_detection in spot_detections.items():
+            for channel, spot_detection in round_obj.spot_detection_files.items():
                 spots_exist = spot_detection.spots_file and spot_detection.spots_file.exists()
                 stats_count = len([f for f in spot_detection.stats_files.values() if f.exists()])
                 print(
@@ -441,36 +675,41 @@ class HCRDataset:
     def _print_file_status(self):
         """Print file existence status."""
         print("\nFile Status:")
-        for round_key in self.get_rounds():
-            spot_file = self.spot_files[round_key]
-            zarr_file = self.zarr_files[round_key]
+        for round_key, round_obj in self.rounds.items():
             print(f"  {round_key}:")
 
             spot_files_exist = [
-                f for f in [spot_file.mixed_spots, spot_file.unmixed_spots] if f and f.exists()
+                f
+                for f in [round_obj.spot_files.mixed_spots, round_obj.spot_files.unmixed_spots]
+                if f and f.exists()
             ]
             print(f"    Spot files: {len(spot_files_exist)} of 2 exist")
 
-            zarr_files_exist = [f for f in zarr_file.fused.values() if f.exists()]
-            print(f"    Zarr files: {len(zarr_files_exist)} of {len(zarr_file.fused)} exist")
+            zarr_files_exist = [f for f in round_obj.zarr_files.fused.values() if f.exists()]
+            print(
+                f"    Zarr files: {len(zarr_files_exist)} of {len(round_obj.zarr_files.fused)} exist"
+            )
 
-            if round_key in self.segmentation_files:
-                seg_files = self.segmentation_files[round_key]
-                mask_count = len([f for f in seg_files.segmentation_masks.values() if f.exists()])
-                print(
-                    f"    Segmentation: {mask_count} of {len(seg_files.segmentation_masks)} masks exist"
+            if round_obj.segmentation_files:
+                mask_count = len(
+                    [
+                        f
+                        for f in round_obj.segmentation_files.segmentation_masks.values()
+                        if f.exists()
+                    ]
                 )
+                total_masks = len(round_obj.segmentation_files.segmentation_masks)
+                print(f"    Segmentation: {mask_count} of {total_masks} masks exist")
 
-            if round_key in self.spot_detection_files:
-                spot_detections = self.spot_detection_files[round_key]
+            if round_obj.spot_detection_files:
                 detections = [
                     sd
-                    for sd in spot_detections.values()
+                    for sd in round_obj.spot_detection_files.values()
                     if sd.spots_file and sd.spots_file.exists()
                 ]
                 detection_count = len(detections)
                 print(
-                    f"    Spot detection: {detection_count} of {len(spot_detections)} channels exist"
+                    f"    Spot detection: {detection_count} of {len(round_obj.spot_detection_files)} channels exist"
                 )
 
     def summary(self):
@@ -479,6 +718,44 @@ class HCRDataset:
         self._print_segmentation_info()
         self._print_spot_detection_info()
         self._print_file_status()
+
+    def __dir__(self):
+        """
+        Return a list of valid attributes and methods for this HCRDataset.
+
+        This enables better tab completion and introspection.
+        Excludes dunder methods and separates attributes from methods.
+        """
+        # Public attributes specific to HCRDataset
+        dataset_attrs = ["rounds", "mouse_id", "metadata", "dataset_names"]
+
+        # Public methods specific to HCRDataset
+        dataset_methods = [
+            "get_rounds",
+            "get_channels",
+            "has_round",
+            "get_cell_info",
+            "create_cell_gene_matrix",
+            "load_zarr_channel",
+            "create_channel_gene_table",
+            "get_segmentation_resolutions",
+            "load_segmentation_mask",
+            "load_cell_centroids",
+            "summary",
+        ]
+
+        # Combine attributes first, then methods for organized display
+        return dataset_attrs + dataset_methods
+
+    def __repr__(self):
+        """Return a string representation of the HCRDataset object."""
+        rounds_list = list(self.rounds.keys())
+        total_channels = sum(len(round_obj.get_channels()) for round_obj in self.rounds.values())
+        return (
+            f"HCRDataset(mouse_id='{self.mouse_id}', "
+            f"rounds={rounds_list}, "
+            f"total_channels={total_channels})"
+        )
 
 
 # ------------------------------------------------------------------------------------------------
@@ -506,13 +783,21 @@ def create_hcr_dataset(round_dict: dict, data_dir: Path, mouse_id: str = None):
     """
     spot_files = get_spot_files(round_dict, data_dir)
     zarr_files = get_zarr_files(round_dict, data_dir)
-    processing_manifests = get_processing_manifests(
-        round_dict, data_dir
-    )  # Added processing manifests
-    segmentation_files = get_segmentation_files(round_dict, data_dir)  # Added segmentation files
-    spot_detection_files = get_spot_detection_files(
-        round_dict, data_dir
-    )  # Added spot detection files
+    processing_manifests = get_processing_manifests(round_dict, data_dir)
+    segmentation_files = get_segmentation_files(round_dict, data_dir)
+    spot_detection_files = get_spot_detection_files(round_dict, data_dir)
+
+    # Create HCRRound objects
+    rounds = {}
+    for round_key in round_dict.keys():
+        rounds[round_key] = HCRRound(
+            round_key=round_key,
+            spot_files=spot_files[round_key],
+            zarr_files=zarr_files[round_key],
+            processing_manifest=processing_manifests.get(round_key, {}),
+            segmentation_files=segmentation_files.get(round_key),
+            spot_detection_files=spot_detection_files.get(round_key, {}),
+        )
 
     # Load metadata if available
     metadata = None
@@ -523,11 +808,7 @@ def create_hcr_dataset(round_dict: dict, data_dir: Path, mouse_id: str = None):
             print(f"Could not load metadata for mouse {mouse_id}")
 
     return HCRDataset(
-        spot_files=spot_files,
-        zarr_files=zarr_files,
-        processing_manifests=processing_manifests,
-        segmentation_files=segmentation_files,
-        spot_detection_files=spot_detection_files,
+        rounds=rounds,
         mouse_id=mouse_id,
         metadata=metadata,
     )
@@ -610,86 +891,6 @@ def get_cell_info_r1(spot_files, round_key="R1"):
     df_cells = df_r1[cols_to_keep].drop_duplicates()
 
     return df_cells
-
-
-def create_cell_gene_matrix(spot_files, unmixed=True):
-    """
-    Stack all rounds' unmixed cell-by-gene data and create a pivot table.
-    Append round names to genes only when there are duplicates across rounds.
-
-    Parameters:
-    -----------
-    spot_files : dict
-        Dictionary mapping round keys to SpotFiles objects
-
-    Returns:
-    --------
-    pd.DataFrame
-        Pivot table with cell_id as index, genes as columns, and spot_count as values
-    """
-    # First pass: collect all genes from all rounds to identify duplicates
-    all_genes_by_round = {}
-    for round_key in spot_files.keys():
-        if unmixed:
-            # Read the unmixed cell-by-gene data
-            df = pd.read_csv(spot_files[round_key].unmixed_cxg)
-        else:
-            df = pd.read_csv(spot_files[round_key].mixed_cxg)
-        all_genes_by_round[round_key] = set(df["gene"].unique())
-        print(f"Round {round_key} has these genes: {df['gene'].unique()}")
-
-    # Find genes that appear in multiple rounds
-    all_genes = set()
-    for genes in all_genes_by_round.values():
-        all_genes.update(genes)
-
-    duplicate_genes = set()
-    for gene in all_genes:
-        rounds_with_gene = [
-            round_key for round_key, genes in all_genes_by_round.items() if gene in genes
-        ]
-        if len(rounds_with_gene) > 1:
-            duplicate_genes.add(gene)
-            print(f"Gene '{gene}' appears in rounds: {', '.join(rounds_with_gene)}")
-    print(f"Total duplicate genes found: {len(duplicate_genes)}")
-
-    # Second pass: process dataframes with appropriate gene naming
-    all_rounds_data = []
-
-    for round_key in spot_files.keys():
-        # Read the csv for this round
-        if unmixed:
-            # Read the unmixed cell-by-gene data
-            df = pd.read_csv(spot_files[round_key].unmixed_cxg)
-        else:
-            # Read the mixed cell-by-gene data
-            df = pd.read_csv(spot_files[round_key].mixed_cxg)
-
-        # Keep only the columns we want
-        cols_to_keep = ["cell_id", "gene", "spot_count"]
-        df = df[cols_to_keep]
-
-        # Only append round name for genes that appear in multiple rounds
-        df["gene_final"] = df["gene"].apply(
-            lambda x: f"{x}_{round_key}" if x in duplicate_genes else x
-        )
-
-        # Drop original gene column and rename
-        df = df.drop("gene", axis=1).rename(columns={"gene_final": "gene"})
-
-        # Append to list
-        all_rounds_data.append(df)
-
-    # Concatenate all rounds
-    stacked_df = pd.concat(all_rounds_data, ignore_index=True)
-
-    # Pivot to get cell_id as index and genes as columns
-    pivot_df = stacked_df.pivot(index="cell_id", columns="gene", values="spot_count")
-
-    # Fill NaN values with 0 (genes not detected in certain cells)
-    pivot_df = pivot_df.fillna(0)
-
-    return pivot_df
 
 
 def create_channel_gene_table(spot_files: dict, spots_only=True) -> pd.DataFrame:
