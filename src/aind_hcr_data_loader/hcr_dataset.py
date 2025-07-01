@@ -25,7 +25,7 @@ channel_genes = dataset.create_channel_gene_table()
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -81,7 +81,19 @@ class SpotDetection:
 
     channel: str
     spots_file: Path
-    stats_files: dict
+    stats_files: Dict[str, Path]
+
+
+@dataclass
+class TileAlignmentFiles:
+    """Dataclass to hold paths to tile alignment XML files."""
+
+    raw_single_xml: Optional[Path] = None
+    raw_single_tile_subset_xml: Optional[Path] = None
+    raw_spot_xml: Optional[Path] = None
+    raw_spot_tile_subset_xml: Optional[Path] = None
+    pc_xml: Optional[Path] = None
+    ip_xml: Optional[Path] = None
 
 
 @dataclass
@@ -118,43 +130,59 @@ class HCRRound:
     def __init__(
         self,
         round_key: str,
-        spot_files: SpotFiles,
-        zarr_files: ZarrDataFiles,
+        name: str,
+        spot_files: "SpotFiles",
+        zarr_files: "ZarrDataFiles",
+        segmentation_files: "SegmentationFiles",
+        spot_detection_files: Dict[str, "SpotDetection"],
         processing_manifest: dict,
-        name: str = None,
-        segmentation_files: SegmentationFiles = None,
-        spot_detection_files: Dict[str, SpotDetection] = None,
+        tile_alignment_files: "TileAlignmentFiles" = None,
     ):
         """
-        Initialize an HCRRound object.
+        Initialize HCRRound.
 
         Parameters:
         -----------
         round_key : str
             The identifier for this round (e.g., 'R1', 'R2')
+        name : str
+            Name of the round. Folder name where data is stored.
         spot_files : SpotFiles
             Spot files for this round
         zarr_files : ZarrDataFiles
             Zarr files for this round
-        processing_manifest : dict
-            Processing manifest data for this round
-        name : str, optional
-            Dataset name for this round
         segmentation_files : SegmentationFiles, optional
             Segmentation files for this round
         spot_detection_files : Dict[str, SpotDetection], optional
             Spot detection files for this round, mapping channel to SpotDetection
+        processing_manifest : dict
+            Processing manifest data for this round
+        tile_alignment_files : TileAlignmentFiles, optional
+            Tile alignment files for this round
         """
         self.round_key = round_key
         self.name = name
         self.spot_files = spot_files
         self.zarr_files = zarr_files
-        self.processing_manifest = processing_manifest
         self.segmentation_files = segmentation_files
-        self.spot_detection_files = spot_detection_files or {}
+        self.spot_detection_files = spot_detection_files
+        self.processing_manifest = processing_manifest
+        self.tile_alignment_files = tile_alignment_files
 
-    def get_channels(self):
-        """Get list of available channels for this round."""
+    def get_channels(self, data_type="fused"):
+        """
+        Get list of available channels for this round.
+
+        Parameters:
+        -----------
+        data_type : str
+            Type of data ('fused', 'corrected', 'raw')
+
+        Returns:
+        --------
+        list
+            List of available channels for this round
+        """
         return self.zarr_files.get_channels()
 
     def has_channel(self, channel):
@@ -678,6 +706,23 @@ class HCRDataset:
                     f"    {channel}: spots {'✓' if spots_exist else '✗'}, stats files: {stats_count}"
                 )
 
+    def _print_tile_alignment_info(self):
+        """Print tile alignment file information."""
+        alignment_rounds = {
+            k: round_obj
+            for k, round_obj in self.rounds.items()
+            if round_obj.tile_alignment_files is not None
+        }
+        if not alignment_rounds:
+            return
+        print("\nTile alignment files by round:")
+        for round_key, round_obj in alignment_rounds.items():
+            xml_files = round_obj.tile_alignment_files
+            print(f"  {round_key}:")
+            for file_type, file_path in xml_files.__dict__.items():
+                if file_path:
+                    print(f"    {file_type}: {file_path.name}")
+
     def _print_file_status(self):
         """Print file existence status."""
         print("\nFile Status:")
@@ -718,11 +763,16 @@ class HCRDataset:
                     f"    Spot detection: {detection_count} of {len(round_obj.spot_detection_files)} channels exist"
                 )
 
+            if round_obj.tile_alignment_files:
+                xml_files = round_obj.tile_alignment_files
+                print(f"    Tile alignment files: {', '.join(f.name for f in xml_files.__dict__.values() if f)}")
+
     def summary(self):
         """Print a summary of the dataset."""
         self._print_basic_info()
         self._print_segmentation_info()
         self._print_spot_detection_info()
+        self._print_tile_alignment_info()
         self._print_file_status()
 
     def __dir__(self):
@@ -792,6 +842,7 @@ def create_hcr_dataset(round_dict: dict, data_dir: Path, mouse_id: str = None):
     processing_manifests = get_processing_manifests(round_dict, data_dir)
     segmentation_files = get_segmentation_files(round_dict, data_dir)
     spot_detection_files = get_spot_detection_files(round_dict, data_dir)
+    tile_alignment_files = get_tile_alignment_files(round_dict, data_dir)
 
     # Create HCRRound objects
     rounds = {}
@@ -804,6 +855,7 @@ def create_hcr_dataset(round_dict: dict, data_dir: Path, mouse_id: str = None):
             processing_manifest=processing_manifests.get(round_key, {}),
             segmentation_files=segmentation_files.get(round_key),
             spot_detection_files=spot_detection_files.get(round_key, {}),
+            tile_alignment_files=tile_alignment_files.get(round_key),
         )
 
     # Load metadata if available
@@ -1042,6 +1094,52 @@ def get_segmentation_files(round_dict: dict, data_dir: Path):
         )
 
     return segmentation_files
+
+
+def get_tile_alignment_files(round_dict: dict, data_dir: Path):
+    """
+    Get TileAlignmentFiles for each round based on a dictionary mapping round keys to folder names.
+    Parameters:
+    -----------
+    round_dict : dict
+        Dictionary mapping round keys (e.g., 'R1', 'R2') to folder names containing the data.
+    data_dir : Path
+        Path to the directory containing the round folders.
+    Returns:
+    --------
+    dict
+        Dictionary mapping round keys to TileAlignmentFiles objects containing paths to alignment files.
+    """
+    tile_alignment_files = {}
+    for key, folder in round_dict.items():
+        stitching_path = data_dir / folder / "image_tile_fusing" / "metadata" / "stitching"
+
+        def check_exist(path):
+            return path if path.exists() else None
+
+        tile_alignment_files[key] = TileAlignmentFiles(
+            raw_single_xml=check_exist(
+                stitching_path / "stitching_single_channel_updated_remote.xml"
+            ),
+            raw_single_tile_subset_xml=check_exist(
+                stitching_path
+                / "stitching_single_channel_updated_tile_subset_remote.xml"
+            ),
+            raw_spot_xml=check_exist(
+                stitching_path / "stitching_spot_channels_updated_remote.xml"
+            ),
+            raw_spot_tile_subset_xml=check_exist(
+                stitching_path
+                / "stitching_spot_channels_updated_tile_subset_remote.xml"
+            ),
+            pc_xml=check_exist(
+                stitching_path / "interest_point_stitching" / "bigstitcher_0.xml"
+            ),
+            ip_xml=check_exist(
+                stitching_path / "phase_correlation_stitching" / "bigstitcher.xml"
+            ),
+        )
+    return tile_alignment_files
 
 
 def get_spot_detection_files(round_dict: dict, data_dir: Path):
