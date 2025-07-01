@@ -25,7 +25,7 @@ channel_genes = dataset.create_channel_gene_table()
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -765,7 +765,9 @@ class HCRDataset:
 
             if round_obj.tile_alignment_files:
                 xml_files = round_obj.tile_alignment_files
-                print(f"    Tile alignment files: {', '.join(f.name for f in xml_files.__dict__.values() if f)}")
+                print(
+                    f"    Tile alignment files: {', '.join(f.name for f in xml_files.__dict__.values() if f)}"
+                )
 
     def summary(self):
         """Print a summary of the dataset."""
@@ -1115,6 +1117,7 @@ def get_tile_alignment_files(round_dict: dict, data_dir: Path):
         stitching_path = data_dir / folder / "image_tile_fusing" / "metadata" / "stitching"
 
         def check_exist(path):
+            """check exist"""
             return path if path.exists() else None
 
         tile_alignment_files[key] = TileAlignmentFiles(
@@ -1122,22 +1125,16 @@ def get_tile_alignment_files(round_dict: dict, data_dir: Path):
                 stitching_path / "stitching_single_channel_updated_remote.xml"
             ),
             raw_single_tile_subset_xml=check_exist(
-                stitching_path
-                / "stitching_single_channel_updated_tile_subset_remote.xml"
+                stitching_path / "stitching_single_channel_updated_tile_subset_remote.xml"
             ),
             raw_spot_xml=check_exist(
                 stitching_path / "stitching_spot_channels_updated_remote.xml"
             ),
             raw_spot_tile_subset_xml=check_exist(
-                stitching_path
-                / "stitching_spot_channels_updated_tile_subset_remote.xml"
+                stitching_path / "stitching_spot_channels_updated_tile_subset_remote.xml"
             ),
-            pc_xml=check_exist(
-                stitching_path / "interest_point_stitching" / "bigstitcher_0.xml"
-            ),
-            ip_xml=check_exist(
-                stitching_path / "phase_correlation_stitching" / "bigstitcher.xml"
-            ),
+            pc_xml=check_exist(stitching_path / "interest_point_stitching" / "bigstitcher_0.xml"),
+            ip_xml=check_exist(stitching_path / "phase_correlation_stitching" / "bigstitcher.xml"),
         )
     return tile_alignment_files
 
