@@ -1133,8 +1133,8 @@ def get_tile_alignment_files(round_dict: dict, data_dir: Path):
             raw_spot_tile_subset_xml=check_exist(
                 stitching_path / "stitching_spot_channels_updated_tile_subset_remote.xml"
             ),
-            pc_xml=check_exist(stitching_path / "interest_point_stitching" / "bigstitcher_0.xml"),
-            ip_xml=check_exist(stitching_path / "phase_correlation_stitching" / "bigstitcher.xml"),
+            pc_xml=check_exist(stitching_path / "phase_correlation_stitching" / "bigstitcher.xml"),
+            ip_xml=check_exist(stitching_path / "interest_point_stitching" / "bigstitcher_0.xml"),
         )
     return tile_alignment_files
 
