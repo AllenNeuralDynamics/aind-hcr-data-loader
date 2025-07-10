@@ -265,7 +265,13 @@ class HCRRound:
             )
 
         mask_path = self.segmentation_files.segmentation_masks[resolution_key]
-        return zarr.open(mask_path, mode="r")["0"]
+
+        if resolution_key == "0":
+            # Load the standard segmentation mask
+            return zarr.open(mask_path, mode="r")["0"]
+        elif resolution_key == "2":
+            # Load the original resolution segmentation mask
+            return zarr.open(mask_path, mode="r")
 
     def load_cell_centroids(self):
         """
