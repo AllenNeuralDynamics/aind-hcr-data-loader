@@ -272,7 +272,6 @@ class HCRRound:
         elif resolution_key == "2":
             # sometimes the original resolution mask is stored in a group....
             zarr_file = zarr.open(mask_path, mode="r")
-            logger.debug(f"Loaded zarr file: {zarr_file}")
             if isinstance(zarr_file, zarr.Array):
                 return zarr_file
             elif isinstance(zarr_file, zarr.Group):
