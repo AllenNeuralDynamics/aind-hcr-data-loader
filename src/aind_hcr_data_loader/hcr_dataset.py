@@ -270,8 +270,15 @@ class HCRRound:
             # Load the standard segmentation mask
             return zarr.open(mask_path, mode="r")["0"]
         elif resolution_key == "2":
-            # Load the original resolution segmentation mask
-            return zarr.open(mask_path, mode="r")
+            # sometimes the original resolution mask is stored in a group....
+            zarr_file = zarr.open(mask_path, mode="r")
+            if isinstance(zarr_file, zarr.Array):
+                return zarr_file
+            elif isinstance(zarr_file, zarr.Group):
+                if "0" in zarr_file:
+                    return zarr_file["0"]
+                else:
+                    raise ValueError(f"No '0' array found in {mask_path}")
 
     def load_cell_centroids(self):
         """
