@@ -30,6 +30,8 @@ from typing import Dict, Optional
 import numpy as np
 import pandas as pd
 
+import zarr
+
 
 @dataclass
 class SpotFiles:
@@ -271,12 +273,13 @@ class HCRRound:
             return zarr.open(mask_path, mode="r")["0"]
         elif resolution_key == "2":
             # sometimes the original resolution mask is stored in a group....
-            zarr = zarr.open(mask_path, mode="r")
-            if isinstance(zarr, zarr.Array):
-                return zarr
-            elif isinstance(zarr, zarr.Group):
-                if "0" in zarr:
-                    return zarr["0"]
+            zarr_file = zarr.open(mask_path, mode="r")
+            print(zarr_file)
+            if isinstance(zarr_file, zarr.Array):
+                return zarr_file
+            elif isinstance(zarr_file, zarr.Group):
+                if "0" in zarr_file:
+                    return zarr_file["0"]
                 else:
                     raise ValueError(f"No '0' array found in {mask_path}")
 
