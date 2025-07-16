@@ -29,6 +29,7 @@ from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
+import warnings
 
 
 @dataclass
@@ -310,7 +311,12 @@ class HCRRound:
             DataFrame containing cell_id, volume, and centroid coordinates
         """
         # Read data for this round
-        df = pd.read_csv(self.spot_files.unmixed_cxg)
+        df = pd.read_csv(self.spot_files.mixed_cxg)
+
+        # add warning, getting cell info from mixed cxg
+        warnings.warn(
+            "Getting cell info from mixed cxg file. Does not include all segementation masks."
+        )
 
         # Keep only the columns we want
         cols_to_keep = ["cell_id", "volume", "x_centroid", "y_centroid", "z_centroid"]
