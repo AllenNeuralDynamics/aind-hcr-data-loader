@@ -23,13 +23,13 @@ channel_genes = dataset.create_channel_gene_table()
 
 """
 import json
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
-import warnings
 
 
 @dataclass
