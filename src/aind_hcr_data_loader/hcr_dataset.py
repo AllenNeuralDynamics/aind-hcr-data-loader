@@ -27,9 +27,13 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
+import pickle as pkl
 
 import numpy as np
 import pandas as pd
+
+import multiprocessing as mp
+from functools import partial
 
 
 @dataclass
@@ -324,6 +328,32 @@ class HCRRound:
 
         return df_cells
 
+
+    def load_spots(self, table_type='mixed_spots'):
+        """
+        Load spots for this round (non-multiprocessing version).
+        
+        Parameters:
+        -----------
+        table_type : str
+            Type of spots to load ('mixed_spots' or 'unmixed_spots')
+        
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame with spots data including round column
+        """
+        print(f"Loading {table_type} for round {self.round_key}")
+        
+        spot_file_path = getattr(self.spot_files, table_type)
+        
+        with open(spot_file_path, 'rb') as f:
+            spots_data = pkl.load(f)
+            spots_data['round'] = self.round_key
+        
+        return spots_data
+
+
     def __dir__(self):
         """
         Return a list of valid attributes and methods for this HCRRound.
@@ -461,6 +491,36 @@ class HCRDataset:
             raise ValueError(f"Round {round_key} not found")
 
         return self.rounds[round_key].get_cell_info()
+
+    def load_all_rounds_spots_mp(self, table_type='mixed_spots'):
+        """
+        Load all spots from the dataset in parallel.
+
+        Parameters:
+        -----------
+        table_type : str
+            Type of spots to load ('mixed_spots' or 'unmixed_spots')
+        
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame containing all spots from all rounds
+        """
+        # Create list of (round_key, round_obj) tuples for multiprocessing
+        round_items = list(self.rounds.items())
+        
+        # Use multiprocessing to load spots from all rounds
+        pool = mp.Pool(processes=min(len(self.rounds), mp.cpu_count()))
+        process_round = partial(_load_spots_for_round, table_type=table_type)
+        all_spots_list = pool.map(process_round, round_items)
+        pool.close()
+        pool.join()
+        
+        # Concatenate all DataFrames
+        all_spots = pd.concat(all_spots_list, ignore_index=True)
+        print(f"Number of {table_type}: {len(all_spots)}")
+
+        return all_spots
 
     def create_cell_gene_matrix(self, unmixed=True, rounds=None):
         """
@@ -839,6 +899,33 @@ class HCRDataset:
 # Helper functions for creating HCRDataset
 # ------------------------------------------------------------------------------------------------
 
+def _load_spots_for_round(round_item, table_type='mixed_spots'):
+    """
+    Helper function for multiprocessing to load spots for a single round.
+    
+    Parameters:
+    -----------
+    round_item : tuple
+        Tuple of (round_key, round_obj)
+    table_type : str
+        Type of spots to load ('mixed_spots' or 'unmixed_spots')
+    
+    Returns:
+    --------
+    pd.DataFrame
+        DataFrame with spots data including round column
+    """
+    round_key, round_obj = round_item
+    print(f"Loading {table_type} for round {round_key}\n")
+    
+    # Get the appropriate spot file path
+    spot_file_path = getattr(round_obj.spot_files, table_type)
+    
+    with open(spot_file_path, 'rb') as f:
+        spots_data = pkl.load(f)
+        spots_data['round'] = round_key
+    
+    return spots_data
 
 def create_hcr_dataset(round_dict: dict, data_dir: Path, mouse_id: str = None):
     """
