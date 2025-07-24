@@ -522,6 +522,24 @@ class HCRDataset:
 
         return all_spots
 
+    def load_all_rounds_spots_coreg(self, 
+                    ophys_mfish_match_df, 
+                    table_type='mixed_spots'):
+        """Wrapper function around load_all_rounds_spots_mp to filter for coregistered spots.
+        Parameters:
+        - dataset: The HCR dataset containing the rounds and mixed spots.
+        - ophys_mfish_match_df: DataFrame containing coregistered spots with 'ls_id' column.
+        - table_type: Type of spots to load, default is 'mixed_spots'.
+        Returns:
+        - DataFrame containing coregistered mixed spots.
+        """
+        # Load all mixed spots
+        all_mixed_spots = self.load_all_rounds_spots_mp(table_type=table_type)
+        # coreg_spots are in ophys_mfish_match_df 'ls_id' col, need to match 'cell_id' col in all_mixed_spots
+        coreg_spots = all_mixed_spots[all_mixed_spots['cell_id'].isin(ophys_mfish_match_df['ls_id'])]
+        print(f"Number of coregistered mixed spots: {len(coreg_spots)}")
+        return coreg_spots
+
     def create_cell_gene_matrix(self, unmixed=True, rounds=None):
         """
         Create cell-gene matrix from specified rounds.
@@ -916,8 +934,8 @@ def _load_spots_for_round(round_item, table_type='mixed_spots'):
         DataFrame with spots data including round column
     """
     round_key, round_obj = round_item
-    print(f"Loading {table_type} for round {round_key}\n")
-    
+    print(f"Loading {table_type} for round {round_key}: {round_obj.name}\n")
+
     # Get the appropriate spot file path
     spot_file_path = getattr(round_obj.spot_files, table_type)
     
@@ -1528,3 +1546,6 @@ def get_processing_manifests(round_dict: dict, data_dir: Path):
         processing_manifests[key] = load_processing_manifest(manifest_path)
 
     return processing_manifests
+
+
+
