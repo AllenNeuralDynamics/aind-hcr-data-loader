@@ -305,9 +305,21 @@ class HCRRound:
 
         return np.load(self.segmentation_files.cell_centroids)
 
-    def get_cell_info(self):
+    def get_cell_info(self,source="mixed_cxg"):
         """
-        Get cell information for this round.
+        Get cell information.
+
+        segmentation: 
+            contains every mask from segmentation, 
+            columns: cell_id, x_centroid, y_centroid, z_centroid
+        mixed_cxg: 
+            contains subset of masks, that had a detected spot
+            columns: cell_id, volume, x_centroid, y_centroid, z_centroid
+
+        Parameters:
+        -----------
+        source : str
+            Source of cell information ('mixed_cxg' or 'unmixed_cxg')
 
         Returns:
         --------
@@ -315,17 +327,42 @@ class HCRRound:
             DataFrame containing cell_id, volume, and centroid coordinates
         """
         # Read data for this round
-        df = pd.read_csv(self.spot_files.mixed_cxg)
+        if source not in ['mixed_cxg', 'unmixed_cxg', 'segmentation']:
+            raise ValueError("Source must be 'mixed_cxg', 'unmixed_cxg', or 'segmentation'")
 
-        # add warning, getting cell info from mixed cxg
-        warnings.warn(
-            "Getting cell info from mixed cxg file. Does not include all segementation masks."
-        )
+        if source == 'unmixed_cxg':
+            print(f"Loading unmixed cxg for round {self.round_key}")
+            try:
+                df = pd.read_csv(self.spot_files.unmixed_cxg)
+            except Exception as e:
+                print(f"Warning: Error reading mixed cxg file: {e}")
+                return pd.DataFrame()  # Return empty DataFrame if file does not exist
 
-        # Keep only the columns we want
-        cols_to_keep = ["cell_id", "volume", "x_centroid", "y_centroid", "z_centroid"]
-        df_cells = df[cols_to_keep].drop_duplicates()
+            # add warning, getting cell info from mixed cxg
+            warnings.warn(
+                "Getting cell info from mixed cxg file. Does not include all segementation masks."
+            )
 
+            # Keep only the columns we want
+            cols_to_keep = ["cell_id", "volume", "x_centroid", "y_centroid", "z_centroid"]
+            df_cells = df[cols_to_keep].drop_duplicates()
+        elif source == 'mixed_cxg':
+            print(f"Loading mixed cxg for round {self.round_key}")
+            try:
+                df = pd.read_csv(self.spot_files.mixed_cxg)
+            except Exception as e:
+                print(f"Warning: Error reading mixed cxg file: {e}")
+                return pd.DataFrame()  # Return empty DataFrame if file does not exist
+            
+            # Keep only the columns we want
+            cols_to_keep = ["cell_id", "volume", "x_centroid", "y_centroid", "z_centroid"]
+            df_cells = df[cols_to_keep].drop_duplicates()
+        elif source == 'segmentation':
+            # load centroids from segmentation files
+            centroids = self.load_cell_centroids()
+            df_cells = pd.DataFrame(centroids, columns=["cell_id", "x_centroid", "y_centroid", "z_centroid"])
+            df_cells["cell_id"] = df_cells.index
+        print(f"Number of cells in {source} for round {self.round_key}: {len(df_cells)}")
         return df_cells
 
 
@@ -473,9 +510,11 @@ class HCRDataset:
         """Check if dataset contains a specific round."""
         return round_key in self.rounds
 
-    def get_cell_info(self, round_key="R1"):
+    def get_cell_info(self, source="mixed_cxg"):
         """
         Get cell information from a specific round.
+
+        Usually just get R1 cell ids.
 
         Parameters:
         -----------
@@ -487,10 +526,25 @@ class HCRDataset:
         pd.DataFrame
             DataFrame containing cell_id, volume, and centroid coordinates
         """
-        if round_key not in self.rounds:
-            raise ValueError(f"Round {round_key} not found")
 
-        return self.rounds[round_key].get_cell_info()
+
+        if source == 'segmentation':
+            # only R1 has segmentation centroids
+            return self.rounds["R1"].get_cell_info(source=source)
+
+        if source == 'mixed_cxg' or source == 'unmixed_cxg':
+            # Concatenate cell info from all rounds
+            all_cells = []
+            for r_key, round_obj in self.rounds.items():
+                cells = round_obj.get_cell_info(source=source)
+                #cells['round'] = r_key
+                all_cells.append(cells)
+
+                # get the unique cell ids
+            all_cells_df = pd.concat(all_cells, ignore_index=True)
+            all_cells_df = all_cells_df.drop_duplicates(subset=['cell_id']).reset_index(drop=True)
+
+            return all_cells_df
 
     def load_all_rounds_spots_mp(self, table_type='mixed_spots'):
         """
@@ -938,6 +992,11 @@ def _load_spots_for_round(round_item, table_type='mixed_spots'):
 
     # Get the appropriate spot file path
     spot_file_path = getattr(round_obj.spot_files, table_type)
+
+    # check if path exists
+    if spot_file_path is None or not spot_file_path.exists():
+        print(f"Warning: Spot file {spot_file_path} does not exist for round {round_key}")
+        return pd.DataFrame()  # Return empty DataFrame if file does not exist
     
     with open(spot_file_path, 'rb') as f:
         spots_data = pkl.load(f)
