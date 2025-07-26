@@ -337,9 +337,9 @@ class HCRRound:
                 print(f"Warning: Error reading unmixed cxg file: {e}")
                 return pd.DataFrame()  # Return empty DataFrame if file does not exist
 
-            # add warning, getting cell info from mixed cxg
+            # add warning, getting cell info from unmixed cxg
             warnings.warn(
-                "Getting cell info from mixed cxg file. Does not include all segementation masks."
+                "Getting cell info from unmixed cxg file. Does not include all segmentation masks."
             )
 
             # Keep only the columns we want
