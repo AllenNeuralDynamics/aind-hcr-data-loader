@@ -360,7 +360,7 @@ class HCRRound:
         elif source == 'segmentation':
             # load centroids from segmentation files
             centroids = self.load_cell_centroids()
-            df_cells = pd.DataFrame(centroids, columns=["cell_id", "x_centroid", "y_centroid", "z_centroid"])
+            df_cells = pd.DataFrame(centroids, columns=["z_centroid", "y_centroid", "x_centroid", "cell_id"])
             df_cells["cell_id"] = df_cells.index
         print(f"Number of cells in {source} for round {self.round_key}: {len(df_cells)}")
         return df_cells
@@ -572,7 +572,7 @@ class HCRDataset:
         
         # Concatenate all DataFrames
         all_spots = pd.concat(all_spots_list, ignore_index=True)
-        print(f"Number of {table_type}: {len(all_spots)}")
+        print(f"Number of {table_type}: {len(all_spots):.3e}")
 
         return all_spots
 
