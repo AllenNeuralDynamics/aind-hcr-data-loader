@@ -334,7 +334,7 @@ class HCRRound:
             try:
                 df = pd.read_csv(self.spot_files.unmixed_cxg)
             except Exception as e:
-                print(f"Warning: Error reading mixed cxg file: {e}")
+                print(f"Warning: Error reading unmixed cxg file: {e}")
                 return pd.DataFrame()  # Return empty DataFrame if file does not exist
 
             # add warning, getting cell info from mixed cxg
