@@ -23,17 +23,16 @@ channel_genes = dataset.create_channel_gene_table()
 
 """
 import json
+import multiprocessing as mp
+import pickle as pkl
 import warnings
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Dict, Optional
-import pickle as pkl
 
 import numpy as np
 import pandas as pd
-
-import multiprocessing as mp
-from functools import partial
 
 
 @dataclass
@@ -305,14 +304,14 @@ class HCRRound:
 
         return np.load(self.segmentation_files.cell_centroids)
 
-    def get_cell_info(self,source="mixed_cxg"):
+    def get_cell_info(self, source="mixed_cxg"):
         """
         Get cell information.
 
-        segmentation: 
-            contains every mask from segmentation, 
+        segmentation:
+            contains every mask from segmentation,
             columns: cell_id, x_centroid, y_centroid, z_centroid
-        mixed_cxg: 
+        mixed_cxg:
             contains subset of masks, that had a detected spot
             columns: cell_id, volume, x_centroid, y_centroid, z_centroid
 
@@ -327,10 +326,10 @@ class HCRRound:
             DataFrame containing cell_id, volume, and centroid coordinates
         """
         # Read data for this round
-        if source not in ['mixed_cxg', 'unmixed_cxg', 'segmentation']:
+        if source not in ["mixed_cxg", "unmixed_cxg", "segmentation"]:
             raise ValueError("Source must be 'mixed_cxg', 'unmixed_cxg', or 'segmentation'")
 
-        if source == 'unmixed_cxg':
+        if source == "unmixed_cxg":
             print(f"Loading unmixed cxg for round {self.round_key}")
             try:
                 df = pd.read_csv(self.spot_files.unmixed_cxg)
@@ -346,50 +345,50 @@ class HCRRound:
             # Keep only the columns we want
             cols_to_keep = ["cell_id", "volume", "x_centroid", "y_centroid", "z_centroid"]
             df_cells = df[cols_to_keep].drop_duplicates()
-        elif source == 'mixed_cxg':
+        elif source == "mixed_cxg":
             print(f"Loading mixed cxg for round {self.round_key}")
             try:
                 df = pd.read_csv(self.spot_files.mixed_cxg)
             except Exception as e:
                 print(f"Warning: Error reading mixed cxg file: {e}")
                 return pd.DataFrame()  # Return empty DataFrame if file does not exist
-            
+
             # Keep only the columns we want
             cols_to_keep = ["cell_id", "volume", "x_centroid", "y_centroid", "z_centroid"]
             df_cells = df[cols_to_keep].drop_duplicates()
-        elif source == 'segmentation':
+        elif source == "segmentation":
             # load centroids from segmentation files
             centroids = self.load_cell_centroids()
-            df_cells = pd.DataFrame(centroids, columns=["z_centroid", "y_centroid", "x_centroid", "cell_id"])
+            df_cells = pd.DataFrame(
+                centroids, columns=["z_centroid", "y_centroid", "x_centroid", "cell_id"]
+            )
             df_cells["cell_id"] = df_cells.index
         print(f"Number of cells in {source} for round {self.round_key}: {len(df_cells)}")
         return df_cells
 
-
-    def load_spots(self, table_type='mixed_spots'):
+    def load_spots(self, table_type="mixed_spots"):
         """
         Load spots for this round (non-multiprocessing version).
-        
+
         Parameters:
         -----------
         table_type : str
             Type of spots to load ('mixed_spots' or 'unmixed_spots')
-        
+
         Returns:
         --------
         pd.DataFrame
             DataFrame with spots data including round column
         """
         print(f"Loading {table_type} for round {self.round_key}")
-        
-        spot_file_path = getattr(self.spot_files, table_type)
-        
-        with open(spot_file_path, 'rb') as f:
-            spots_data = pkl.load(f)
-            spots_data['round'] = self.round_key
-        
-        return spots_data
 
+        spot_file_path = getattr(self.spot_files, table_type)
+
+        with open(spot_file_path, "rb") as f:
+            spots_data = pkl.load(f)
+            spots_data["round"] = self.round_key
+
+        return spots_data
 
     def __dir__(self):
         """
@@ -527,26 +526,25 @@ class HCRDataset:
             DataFrame containing cell_id, volume, and centroid coordinates
         """
 
-
-        if source == 'segmentation':
+        if source == "segmentation":
             # only R1 has segmentation centroids
             return self.rounds["R1"].get_cell_info(source=source)
 
-        if source == 'mixed_cxg' or source == 'unmixed_cxg':
+        if source == "mixed_cxg" or source == "unmixed_cxg":
             # Concatenate cell info from all rounds
             all_cells = []
             for r_key, round_obj in self.rounds.items():
                 cells = round_obj.get_cell_info(source=source)
-                #cells['round'] = r_key
+                # cells['round'] = r_key
                 all_cells.append(cells)
 
                 # get the unique cell ids
             all_cells_df = pd.concat(all_cells, ignore_index=True)
-            all_cells_df = all_cells_df.drop_duplicates(subset=['cell_id']).reset_index(drop=True)
+            all_cells_df = all_cells_df.drop_duplicates(subset=["cell_id"]).reset_index(drop=True)
 
             return all_cells_df
 
-    def load_all_rounds_spots_mp(self, table_type='mixed_spots'):
+    def load_all_rounds_spots_mp(self, table_type="mixed_spots"):
         """
         Load all spots from the dataset in parallel.
 
@@ -554,7 +552,7 @@ class HCRDataset:
         -----------
         table_type : str
             Type of spots to load ('mixed_spots' or 'unmixed_spots')
-        
+
         Returns:
         --------
         pd.DataFrame
@@ -562,23 +560,21 @@ class HCRDataset:
         """
         # Create list of (round_key, round_obj) tuples for multiprocessing
         round_items = list(self.rounds.items())
-        
+
         # Use multiprocessing to load spots from all rounds
         pool = mp.Pool(processes=min(len(self.rounds), mp.cpu_count()))
         process_round = partial(_load_spots_for_round, table_type=table_type)
         all_spots_list = pool.map(process_round, round_items)
         pool.close()
         pool.join()
-        
+
         # Concatenate all DataFrames
         all_spots = pd.concat(all_spots_list, ignore_index=True)
         print(f"Number of {table_type}: {len(all_spots):.3e}")
 
         return all_spots
 
-    def load_all_rounds_spots_coreg(self, 
-                    ophys_mfish_match_df, 
-                    table_type='mixed_spots'):
+    def load_all_rounds_spots_coreg(self, ophys_mfish_match_df, table_type="mixed_spots"):
         """Wrapper function around load_all_rounds_spots_mp to filter for coregistered spots.
         Parameters:
         - dataset: The HCR dataset containing the rounds and mixed spots.
@@ -590,7 +586,9 @@ class HCRDataset:
         # Load all mixed spots
         all_mixed_spots = self.load_all_rounds_spots_mp(table_type=table_type)
         # coreg_spots are in ophys_mfish_match_df 'ls_id' col, need to match 'cell_id' col in all_mixed_spots
-        coreg_spots = all_mixed_spots[all_mixed_spots['cell_id'].isin(ophys_mfish_match_df['ls_id'])]
+        coreg_spots = all_mixed_spots[
+            all_mixed_spots["cell_id"].isin(ophys_mfish_match_df["ls_id"])
+        ]
         print(f"Number of coregistered mixed spots: {len(coreg_spots)}")
         return coreg_spots
 
@@ -971,17 +969,18 @@ class HCRDataset:
 # Helper functions for creating HCRDataset
 # ------------------------------------------------------------------------------------------------
 
-def _load_spots_for_round(round_item, table_type='mixed_spots'):
+
+def _load_spots_for_round(round_item, table_type="mixed_spots"):
     """
     Helper function for multiprocessing to load spots for a single round.
-    
+
     Parameters:
     -----------
     round_item : tuple
         Tuple of (round_key, round_obj)
     table_type : str
         Type of spots to load ('mixed_spots' or 'unmixed_spots')
-    
+
     Returns:
     --------
     pd.DataFrame
@@ -997,12 +996,13 @@ def _load_spots_for_round(round_item, table_type='mixed_spots'):
     if spot_file_path is None or not spot_file_path.exists():
         print(f"Warning: Spot file {spot_file_path} does not exist for round {round_key}")
         return pd.DataFrame()  # Return empty DataFrame if file does not exist
-    
-    with open(spot_file_path, 'rb') as f:
+
+    with open(spot_file_path, "rb") as f:
         spots_data = pkl.load(f)
-        spots_data['round'] = round_key
-    
+        spots_data["round"] = round_key
+
     return spots_data
+
 
 def create_hcr_dataset(round_dict: dict, data_dir: Path, mouse_id: str = None):
     """
@@ -1605,6 +1605,3 @@ def get_processing_manifests(round_dict: dict, data_dir: Path):
         processing_manifests[key] = load_processing_manifest(manifest_path)
 
     return processing_manifests
-
-
-
