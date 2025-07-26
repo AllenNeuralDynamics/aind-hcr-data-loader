@@ -362,7 +362,7 @@ class HCRRound:
             df_cells = pd.DataFrame(
                 centroids, columns=["z_centroid", "y_centroid", "x_centroid", "cell_id"]
             )
-            df_cells["cell_id"] = df_cells.index
+            # Retain the original cell_id values from the centroids data
         print(f"Number of cells in {source} for round {self.round_key}: {len(df_cells)}")
         return df_cells
 
