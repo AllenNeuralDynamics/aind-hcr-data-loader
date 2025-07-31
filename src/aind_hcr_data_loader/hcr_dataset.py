@@ -544,22 +544,29 @@ class HCRDataset:
 
             return all_cells_df
 
-    def load_all_rounds_spots_mp(self, table_type="mixed_spots"):
+    def load_all_spots(self, table_type="mixed_spots", rounds=None):
         """
-        Load all spots from the dataset in parallel.
+        Load multiple spot tables in parallel for the provided list of rounds.
+        If rounds is None, all available rounds will be loaded. 
 
         Parameters:
         -----------
-        table_type : str
-            Type of spots to load ('mixed_spots' or 'unmixed_spots')
+        rounds : list
+            List of rounds to load spots for
 
         Returns:
         --------
         pd.DataFrame
-            DataFrame containing all spots from all rounds
+            DataFrame containing all spots from all rounds. One row per spot. 
         """
-        # Create list of (round_key, round_obj) tuples for multiprocessing
-        round_items = list(self.rounds.items())
+        
+        
+        if rounds is None:
+            # Create list of (round_key, round_obj) tuples for multiprocessing
+            round_items = list(self.rounds.items())
+        else: 
+            # Use provided list of rounds
+            round_items = rounds
 
         # Use multiprocessing to load spots from all rounds
         pool = mp.Pool(processes=min(len(self.rounds), mp.cpu_count()))
@@ -572,10 +579,30 @@ class HCRDataset:
         all_spots = pd.concat(all_spots_list, ignore_index=True)
         print(f"Number of {table_type}: {len(all_spots):.3e}")
 
+        # Annotate
+        
+        # Convert channel column
+        all_spots = all_spots.rename(columns={'chan':'channel'})
+        
+        # Get channel-gene metadata
+        channel_gene_table = self.create_channel_gene_table()
+        
+        # Add gene info by merging with cell_gene_table
+        all_spots = all_spots.merge(channel_gene_table, on=['round', 'channel'])
+       
+        # Rename SEG_ID column 
+        if 'SEG_ID' in all_spots.columns:
+            all_spots = all_spots.rename(columns={'SEG_ID':'cell_id'})
+        
+        # Create unique spot ID and set as index
+        all_spots = all_spots.reset_index(drop=True)
+        all_spots['unique_spot_id'] = all_spots.index.values
+        all_spots = all_spots.set_index('unique_spot_id')
+
         return all_spots
 
     def load_all_rounds_spots_coreg(self, ophys_mfish_match_df, table_type="mixed_spots"):
-        """Wrapper function around load_all_rounds_spots_mp to filter for coregistered spots.
+        """Wrapper function around load_all_spots to filter for coregistered spots.
         Parameters:
         - dataset: The HCR dataset containing the rounds and mixed spots.
         - ophys_mfish_match_df: DataFrame containing coregistered spots with 'ls_id' column.
@@ -584,7 +611,7 @@ class HCRDataset:
         - DataFrame containing coregistered mixed spots.
         """
         # Load all mixed spots
-        all_mixed_spots = self.load_all_rounds_spots_mp(table_type=table_type)
+        all_mixed_spots = self.load_all_spots(table_type=table_type)
         # coreg_spots are in ophys_mfish_match_df 'ls_id' col, need to match 'cell_id' col in all_mixed_spots
         coreg_spots = all_mixed_spots[
             all_mixed_spots["cell_id"].isin(ophys_mfish_match_df["ls_id"])
@@ -592,9 +619,10 @@ class HCRDataset:
         print(f"Number of coregistered mixed spots: {len(coreg_spots)}")
         return coreg_spots
 
-    def create_cell_gene_matrix(self, unmixed=True, rounds=None):
+    def create_cell_gene_table(self, unmixed=True, rounds=None):
         """
-        Create cell-gene matrix from specified rounds.
+        Create cell-gene table from specified rounds, containing unique rows for each gene in each cell (when spot count for that gene >0).
+        Other cell metadata is also included, including cell centroid location and volume
 
         Parameters:
         -----------
@@ -606,17 +634,18 @@ class HCRDataset:
         Returns:
         --------
         pd.DataFrame
-            Cell-gene matrix
+            Cell-gene table
         """
         if rounds is None:
             spot_files = {k: round_obj.spot_files for k, round_obj in self.rounds.items()}
         else:
             spot_files = {k: self.rounds[k].spot_files for k in rounds if k in self.rounds}
 
-        # Load all dataframes once and identify duplicates
-        all_genes_by_round = {}
-        dataframes = {}  # Store dataframes to avoid re-reading
+        # Laad channel-gene metadata for this round
+        channel_gene_table = self.create_channel_gene_table(spots_only=True)
 
+        # Load all round dataframes and concatenate
+        all_rounds_data = []
         for round_key in spot_files.keys():
             if unmixed:
                 # Read the unmixed cell-by-gene data
@@ -624,12 +653,19 @@ class HCRDataset:
             else:
                 df = pd.read_csv(spot_files[round_key].mixed_cxg)
 
-            # Store the dataframe and genes for this round
-            dataframes[round_key] = df
-            all_genes_by_round[round_key] = set(df["gene"].unique())
+            # Merge with cell_gene table to get channels for genes in this round
+            df['round'] = round_key  # Add round info
+            df = df.merge(channel_gene_table, on=['round', 'gene'])
+
             print(f"Round {round_key} has these genes: {df['gene'].unique()}")
 
-        # Find genes that appear in multiple rounds
+            # Append to list
+            all_rounds_data.append(df)
+
+        # Concatenate all rounds
+        stacked_df = pd.concat(all_rounds_data, ignore_index=True)
+
+        # Find genes that appear in multiple rounds and print out the info
         all_genes = set()
         for genes in all_genes_by_round.values():
             all_genes.update(genes)
@@ -644,31 +680,76 @@ class HCRDataset:
                 print(f"Gene '{gene}' appears in rounds: {', '.join(rounds_with_gene)}")
         print(f"Total duplicate genes found: {len(duplicate_genes)}")
 
-        # Process dataframes with appropriate gene naming
-        all_rounds_data = []
+        # # Process dataframes with appropriate gene naming
+        # all_rounds_data = []
 
-        for round_key, df in dataframes.items():
-            # Create a proper copy to avoid SettingWithCopyWarning
-            df_processed = df[["cell_id", "gene", "spot_count"]].copy()
+        # for round_key, df in dataframes.items():
+        #     # Create a proper copy to avoid SettingWithCopyWarning
+        #     # df_processed = df[["cell_id", "gene", "spot_count"]].copy()
+        #     df_processed = df.copy()
 
-            # Only append round name for genes that appear in multiple rounds
-            df_processed.loc[:, "gene"] = df_processed["gene"].apply(
-                lambda x: f"{x}_{round_key}" if x in duplicate_genes else x
-            )
+        #     # Only append round name for genes that appear in multiple rounds
+        #     df_processed.loc[:, "gene"] = df_processed["gene"].apply(
+        #         lambda x: f"{x}_{round_key}" if x in duplicate_genes else x
+        #     )
 
-            # Append to list
-            all_rounds_data.append(df_processed)
+        #     # Append to list
+        #     all_rounds_data.append(df_processed)
 
-        # Concatenate all rounds
-        stacked_df = pd.concat(all_rounds_data, ignore_index=True)
+        # # Concatenate all rounds
+        # stacked_df = pd.concat(all_rounds_data, ignore_index=True)
 
-        # Pivot to get cell_id as index and genes as columns
-        pivot_df = stacked_df.pivot(index="cell_id", columns="gene", values="spot_count")
+        # # Pivot to get cell_id as index and genes as columns
+        # pivot_df = stacked_df.pivot(index="cell_id", columns="gene", values="spot_count")
+
+        # # Fill NaN values with 0 (genes not detected in certain cells)
+        # pivot_df = pivot_df.fillna(0)
+
+        return stacked_df
+
+
+    def create_cell_gene_matrix(self, gene_col='gene', cell_gene_table=None, unmixed=True, rounds=None):
+        """
+        Create cell-gene matrix from specified rounds, with cells as rows and genes as columns. 
+        Produced from a cell_gene_table with spot counts and cell metadata, by pivoting on spot counts using cell_id as row and using the provided gene_col as col.
+        If cell_gene_table is not provided, one will be created using create_gene_table function and the provided args unmixed and rounds. 
+
+        Parameters:
+        -----------
+        gene_col: str
+            Specific rounds to include. If None, uses all rounds.
+            
+        cell_gene_table : DataFrame, optional
+            A table including spot counts for genes in each cell. 
+            If None, will create using create_cell_gene_table
+        unmixed : bool, optional
+            If cell_gene_table is not provided, 
+            whether to use unmixed or mixed data when creating it
+        rounds : list, optional
+            If cell_gene_table is not provided, which specific rounds to include in cell_gene_table creation. 
+            If None, uses all rounds.
+
+        Returns:
+        --------
+        pd.DataFrame
+            Cell-gene matrix
+        """
+        if cell_gene_table is None: 
+            cell_gene_table = self.create_cell_gene_table(unmixed=unmixed, rounds=rounds)
+
+        # Select columns to keep 
+        cols_to_keep = ['cell_id', gene_col, 'spot_count']
+        cell_gene_table = cell_gene_table[cols_to_keep]
+
+        # Pivot to get cell_id as index and gene_col as columns
+        pivot_df = cell_gene_table.pivot(index="cell_id", columns=gene_col, values="spot_count")
 
         # Fill NaN values with 0 (genes not detected in certain cells)
         pivot_df = pivot_df.fillna(0)
 
         return pivot_df
+
+
 
     # TODO: may need dask?
     def load_zarr_channel(self, round_key, channel, data_type="fused", pyramid_level=0):
@@ -991,6 +1072,7 @@ def _load_spots_for_round(round_item, table_type="mixed_spots"):
 
     # Get the appropriate spot file path
     spot_file_path = getattr(round_obj.spot_files, table_type)
+    print(spot_file_path)
 
     # check if path exists
     if spot_file_path is None or not spot_file_path.exists():
@@ -1000,7 +1082,7 @@ def _load_spots_for_round(round_item, table_type="mixed_spots"):
     with open(spot_file_path, "rb") as f:
         spots_data = pkl.load(f)
         spots_data["round"] = round_key
-
+    
     return spots_data
 
 
@@ -1204,23 +1286,23 @@ def create_channel_gene_table_from_manifests(
         gene_dict = manifest.get("gene_dict", {})
 
         for channel, details in gene_dict.items():
-            data.append({"Channel": channel, "Gene": details.get("gene", ""), "Round": round_key})
+            data.append({"round": round_key, "channel": channel, "gene": details.get("gene", ""), "rd_ch_gene": round_key+'-'+channel+'-'+details.get("gene", "")})
 
     # Sort by round then channel
-    data.sort(key=lambda x: (x["Round"], x["Channel"]))
+    data.sort(key=lambda x: (x["round"], x["channel"]))
 
     if spots_only:
         # Drop Channel = 405 and Gene = Syto59
         data = [
             entry
             for entry in data
-            if not (entry["Channel"] == "405" and entry["Gene"] == "Syto59")
+            if not (entry["channel"] == "405" and entry["gene"] == "Syto59")
         ]
 
-    # For duplicate genes, append the round name to the gene
-    for entry in data:
-        if entry["Gene"] in [d["Gene"] for d in data if d["Round"] != entry["Round"]]:
-            entry["Gene"] += f"-{entry['Round']}"
+    # # For duplicate genes, append the round name to the gene
+    # for entry in data:
+    #     if entry["gene"] in [d["gene"] for d in data if d["round"] != entry["round"]]:
+    #         entry["gene"] += f"-{entry['Rrund']}"
 
     return pd.DataFrame(data)
 
