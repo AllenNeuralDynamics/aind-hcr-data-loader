@@ -599,6 +599,11 @@ class HCRDataset:
         all_spots['unique_spot_id'] = all_spots.index.values
         all_spots = all_spots.set_index('unique_spot_id')
 
+        if table_type == 'mixed_spots': 
+            self.mixed_spots = all_spots
+        elif table_type == 'unmixed_spots':
+            self.unmixed_spots = all_spots
+
         return all_spots
 
     def load_all_rounds_spots_coreg(self, ophys_mfish_match_df, table_type="mixed_spots"):
@@ -636,7 +641,7 @@ class HCRDataset:
         pd.DataFrame
             Cell-gene table
         """
-        if rounds is None:
+        if rounds is None: # TO DO - make this smart and skip rounds that dont have spot files
             spot_files = {k: round_obj.spot_files for k, round_obj in self.rounds.items()}
         else:
             spot_files = {k: self.rounds[k].spot_files for k in rounds if k in self.rounds}
@@ -646,6 +651,7 @@ class HCRDataset:
 
         # Load all round dataframes and concatenate
         all_rounds_data = []
+        all_genes_by_round = {}
         for round_key in spot_files.keys():
             if unmixed:
                 # Read the unmixed cell-by-gene data
@@ -658,6 +664,7 @@ class HCRDataset:
             df = df.merge(channel_gene_table, on=['round', 'gene'])
 
             print(f"Round {round_key} has these genes: {df['gene'].unique()}")
+            all_genes_by_round[round_key] = df['gene'].unique()
 
             # Append to list
             all_rounds_data.append(df)
@@ -680,30 +687,6 @@ class HCRDataset:
                 print(f"Gene '{gene}' appears in rounds: {', '.join(rounds_with_gene)}")
         print(f"Total duplicate genes found: {len(duplicate_genes)}")
 
-        # # Process dataframes with appropriate gene naming
-        # all_rounds_data = []
-
-        # for round_key, df in dataframes.items():
-        #     # Create a proper copy to avoid SettingWithCopyWarning
-        #     # df_processed = df[["cell_id", "gene", "spot_count"]].copy()
-        #     df_processed = df.copy()
-
-        #     # Only append round name for genes that appear in multiple rounds
-        #     df_processed.loc[:, "gene"] = df_processed["gene"].apply(
-        #         lambda x: f"{x}_{round_key}" if x in duplicate_genes else x
-        #     )
-
-        #     # Append to list
-        #     all_rounds_data.append(df_processed)
-
-        # # Concatenate all rounds
-        # stacked_df = pd.concat(all_rounds_data, ignore_index=True)
-
-        # # Pivot to get cell_id as index and genes as columns
-        # pivot_df = stacked_df.pivot(index="cell_id", columns="gene", values="spot_count")
-
-        # # Fill NaN values with 0 (genes not detected in certain cells)
-        # pivot_df = pivot_df.fillna(0)
 
         return stacked_df
 
@@ -748,8 +731,6 @@ class HCRDataset:
         pivot_df = pivot_df.fillna(0)
 
         return pivot_df
-
-
 
     # TODO: may need dask?
     def load_zarr_channel(self, round_key, channel, data_type="fused", pyramid_level=0):
