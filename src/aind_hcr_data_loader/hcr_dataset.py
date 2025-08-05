@@ -618,11 +618,15 @@ class HCRDataset:
         dataframes = {}  # Store dataframes to avoid re-reading
 
         for round_key in spot_files.keys():
-            if unmixed:
-                # Read the unmixed cell-by-gene data
-                df = pd.read_csv(spot_files[round_key].unmixed_cxg)
-            else:
-                df = pd.read_csv(spot_files[round_key].mixed_cxg)
+            try: 
+                if unmixed:
+                    # Read the unmixed cell-by-gene data
+                    df = pd.read_csv(spot_files[round_key].unmixed_cxg)
+                else:
+                    df = pd.read_csv(spot_files[round_key].mixed_cxg)
+            except FileNotFoundError:
+                print(f"Warning: Spot file for round {round_key} does not exist.")
+                continue
 
             # Store the dataframe and genes for this round
             dataframes[round_key] = df
@@ -734,13 +738,13 @@ class HCRDataset:
     #             return data[data['cell_id'].isin(cell_ids)]
     #        return data
 
-    def create_channel_gene_table(self, spots_only=True):
+    def create_channel_gene_table(self, spots_only=True, label_duplicate_genes=False):
         """Create channel-gene mapping table from processing manifests."""
         processing_manifests = {
             k: round_obj.processing_manifest for k, round_obj in self.rounds.items()
         }
         return create_channel_gene_table_from_manifests(
-            processing_manifests, spots_only=spots_only
+            processing_manifests, spots_only=spots_only, label_duplicate_genes= label_duplicate_genes
         )
 
     def get_segmentation_resolutions(self, round_key=None):
@@ -1160,28 +1164,28 @@ def create_channel_gene_table(spot_files: dict, spots_only=True) -> pd.DataFrame
 
             for channel, details in gene_dict.items():
                 data.append(
-                    {"Channel": channel, "Gene": details.get("gene", ""), "Round": round_key}
+                    {"channel": channel, "gene": details.get("gene", ""), "round": round_key}
                 )
 
     # sort by round then channel
-    data.sort(key=lambda x: (x["Round"], x["Channel"]))
+    data.sort(key=lambda x: (x["round"], x["channel"]))
 
     if spots_only:
         # drop Channel = 405 and Gene = Syto59
         data = [
             entry
             for entry in data
-            if not (entry["Channel"] == "405" and entry["Gene"] == "Syto59")
+            if not (entry["channel"] == "405" and entry["gene"] == "Syto59")
         ]
     # for duplicate genes, append the round name to the gene
     for entry in data:
-        if entry["Gene"] in [d["Gene"] for d in data if d["Round"] != entry["Round"]]:
-            entry["Gene"] += f"-{entry['Round']}"
+        if entry["gene"] in [d["gene"] for d in data if d["round"] != entry["round"]]:
+            entry["gene"] += f"-{entry['round']}"
     return pd.DataFrame(data)
 
 
 def create_channel_gene_table_from_manifests(
-    processing_manifests: Dict[str, dict], spots_only=True
+    processing_manifests: Dict[str, dict], spots_only=True, label_duplicate_genes=True
 ) -> pd.DataFrame:
     """
     Create a table of Channel, Gene, and Round from the "gene_dict" key in the processing manifests for each round.
@@ -1218,9 +1222,10 @@ def create_channel_gene_table_from_manifests(
         ]
 
     # For duplicate genes, append the round name to the gene
-    for entry in data:
-        if entry["Gene"] in [d["Gene"] for d in data if d["Round"] != entry["Round"]]:
-            entry["Gene"] += f"-{entry['Round']}"
+    if label_duplicate_genes:
+        for entry in data:
+            if entry["Gene"] in [d["Gene"] for d in data if d["Round"] != entry["Round"]]:
+                entry["Gene"] += f"-{entry['Round']}"
 
     return pd.DataFrame(data)
 
