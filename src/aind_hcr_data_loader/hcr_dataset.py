@@ -619,7 +619,7 @@ class HCRDataset:
         dataframes = {}  # Store dataframes to avoid re-reading
 
         for round_key in spot_files.keys():
-            try: 
+            try:
                 if unmixed:
                     # Read the unmixed cell-by-gene data
                     df = pd.read_csv(spot_files[round_key].unmixed_cxg)
@@ -745,7 +745,9 @@ class HCRDataset:
             k: round_obj.processing_manifest for k, round_obj in self.rounds.items()
         }
         return create_channel_gene_table_from_manifests(
-            processing_manifests, spots_only=spots_only, label_duplicate_genes= label_duplicate_genes
+            processing_manifests,
+            spots_only=spots_only,
+            label_duplicate_genes=label_duplicate_genes,
         )
 
     def get_segmentation_resolutions(self, round_key=None):
@@ -1270,9 +1272,11 @@ def get_segmentation_files(round_dict: dict, data_dir: Path):
         # Also check for alternate name: segmentation_mask_transformed_level_2.zarr
         mask_transformed_level2_path = folder_path / "segmentation_mask_transformed_level_2.zarr"
 
-
         if mask_transformed_level2_path.exists() and mask_orig_res_path.exists():
-            print("WARNING: multiple types of segmentation masks found. Double check the data is spots/segmentation data is correct for you. Defaulting to transformed masks.")
+            print(
+                "WARNING: multiple types of segmentation masks found. Double check the data is"
+                "spots/segmentation data is correct for you. Defaulting to transformed masks."
+            )
             segmentation_masks["2"] = mask_transformed_level2_path
         elif mask_transformed_level2_path.exists():
             segmentation_masks["2"] = mask_transformed_level2_path
@@ -1283,14 +1287,16 @@ def get_segmentation_files(round_dict: dict, data_dir: Path):
         centroids_path = folder_path / "cell_centroids.npy"
         if not centroids_path.exists():
             centroids_path = None
-        
+
         # check for metrics.pkl
         metrics_path = folder_path / "metrics.pickle"
         if not metrics_path.exists():
-            metrics_path = None 
+            metrics_path = None
 
         segmentation_files[key] = SegmentationFiles(
-            segmentation_masks=segmentation_masks, cell_centroids=centroids_path, metrics_path=metrics_path
+            segmentation_masks=segmentation_masks,
+            cell_centroids=centroids_path,
+            metrics_path=metrics_path,
         )
 
     return segmentation_files
