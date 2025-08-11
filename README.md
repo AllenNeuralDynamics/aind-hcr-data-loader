@@ -8,7 +8,7 @@
 ![Python](https://img.shields.io/badge/python->=3.10-blue?logo=python)
 
 ## Change log
-**v0.3.7 (8/11/2025)**
+**v0.3.8 (8/11/2025)**
  + updated how cell info is gathered from segmentation sources (options for r1 centroids.npy file or union of multi-round mixed/unmixed cell_x_gene tables).
  + metrics path to segmentation files
  + better error handling when missing spot files
