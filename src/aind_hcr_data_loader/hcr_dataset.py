@@ -110,6 +110,7 @@ class SegmentationFiles:
         str, Path
     ]  # Dictionary mapping resolution keys to segmentation mask paths
     cell_centroids: Path = None  # Path to cell centroids file
+    metrics_path: Path = None
 
     def __post_init__(self):
         """Initialize empty dictionary if not provided."""
@@ -618,11 +619,15 @@ class HCRDataset:
         dataframes = {}  # Store dataframes to avoid re-reading
 
         for round_key in spot_files.keys():
-            if unmixed:
-                # Read the unmixed cell-by-gene data
-                df = pd.read_csv(spot_files[round_key].unmixed_cxg)
-            else:
-                df = pd.read_csv(spot_files[round_key].mixed_cxg)
+            try:
+                if unmixed:
+                    # Read the unmixed cell-by-gene data
+                    df = pd.read_csv(spot_files[round_key].unmixed_cxg)
+                else:
+                    df = pd.read_csv(spot_files[round_key].mixed_cxg)
+            except FileNotFoundError:
+                print(f"Warning: Spot file for round {round_key} does not exist.")
+                continue
 
             # Store the dataframe and genes for this round
             dataframes[round_key] = df
@@ -734,13 +739,15 @@ class HCRDataset:
     #             return data[data['cell_id'].isin(cell_ids)]
     #        return data
 
-    def create_channel_gene_table(self, spots_only=True):
+    def create_channel_gene_table(self, spots_only=True, label_duplicate_genes=False):
         """Create channel-gene mapping table from processing manifests."""
         processing_manifests = {
             k: round_obj.processing_manifest for k, round_obj in self.rounds.items()
         }
         return create_channel_gene_table_from_manifests(
-            processing_manifests, spots_only=spots_only
+            processing_manifests,
+            spots_only=spots_only,
+            label_duplicate_genes=label_duplicate_genes,
         )
 
     def get_segmentation_resolutions(self, round_key=None):
@@ -1160,28 +1167,28 @@ def create_channel_gene_table(spot_files: dict, spots_only=True) -> pd.DataFrame
 
             for channel, details in gene_dict.items():
                 data.append(
-                    {"Channel": channel, "Gene": details.get("gene", ""), "Round": round_key}
+                    {"channel": channel, "gene": details.get("gene", ""), "round": round_key}
                 )
 
     # sort by round then channel
-    data.sort(key=lambda x: (x["Round"], x["Channel"]))
+    data.sort(key=lambda x: (x["round"], x["channel"]))
 
     if spots_only:
         # drop Channel = 405 and Gene = Syto59
         data = [
             entry
             for entry in data
-            if not (entry["Channel"] == "405" and entry["Gene"] == "Syto59")
+            if not (entry["channel"] == "405" and entry["gene"] == "Syto59")
         ]
     # for duplicate genes, append the round name to the gene
     for entry in data:
-        if entry["Gene"] in [d["Gene"] for d in data if d["Round"] != entry["Round"]]:
-            entry["Gene"] += f"-{entry['Round']}"
+        if entry["gene"] in [d["gene"] for d in data if d["round"] != entry["round"]]:
+            entry["gene"] += f"-{entry['round']}"
     return pd.DataFrame(data)
 
 
 def create_channel_gene_table_from_manifests(
-    processing_manifests: Dict[str, dict], spots_only=True
+    processing_manifests: Dict[str, dict], spots_only=True, label_duplicate_genes=True
 ) -> pd.DataFrame:
     """
     Create a table of Channel, Gene, and Round from the "gene_dict" key in the processing manifests for each round.
@@ -1218,9 +1225,10 @@ def create_channel_gene_table_from_manifests(
         ]
 
     # For duplicate genes, append the round name to the gene
-    for entry in data:
-        if entry["Gene"] in [d["Gene"] for d in data if d["Round"] != entry["Round"]]:
-            entry["Gene"] += f"-{entry['Round']}"
+    if label_duplicate_genes:
+        for entry in data:
+            if entry["Gene"] in [d["Gene"] for d in data if d["Round"] != entry["Round"]]:
+                entry["Gene"] += f"-{entry['Round']}"
 
     return pd.DataFrame(data)
 
@@ -1264,18 +1272,31 @@ def get_segmentation_files(round_dict: dict, data_dir: Path):
         # Also check for alternate name: segmentation_mask_transformed_level_2.zarr
         mask_transformed_level2_path = folder_path / "segmentation_mask_transformed_level_2.zarr"
 
-        if mask_orig_res_path.exists():
-            segmentation_masks["2"] = mask_orig_res_path
+        if mask_transformed_level2_path.exists() and mask_orig_res_path.exists():
+            print(
+                "WARNING: multiple types of segmentation masks found. Double check the data is"
+                "spots/segmentation data is correct for you. Defaulting to transformed masks."
+            )
+            segmentation_masks["2"] = mask_transformed_level2_path
         elif mask_transformed_level2_path.exists():
             segmentation_masks["2"] = mask_transformed_level2_path
+        elif mask_orig_res_path.exists():
+            segmentation_masks["2"] = mask_orig_res_path
 
         # Check for cell centroids
         centroids_path = folder_path / "cell_centroids.npy"
         if not centroids_path.exists():
             centroids_path = None
 
+        # check for metrics.pkl
+        metrics_path = folder_path / "metrics.pickle"
+        if not metrics_path.exists():
+            metrics_path = None
+
         segmentation_files[key] = SegmentationFiles(
-            segmentation_masks=segmentation_masks, cell_centroids=centroids_path
+            segmentation_masks=segmentation_masks,
+            cell_centroids=centroids_path,
+            metrics_path=metrics_path,
         )
 
     return segmentation_files
