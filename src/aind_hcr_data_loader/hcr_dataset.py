@@ -35,6 +35,79 @@ import numpy as np
 import pandas as pd
 
 
+# ------------------------------------------------------------------------------------------------
+# Utility functions
+# ------------------------------------------------------------------------------------------------
+
+def parse_genotype(genotype_string: str) -> dict:
+    """
+    Parse a genotype string into structured components.
+    
+    Parameters:
+    -----------
+    genotype_string : str
+        Genotype string like 'Slc32a1-IRES-Cre/wt;Oi1(TIT2L-jGCaMP8s-WPRE-ICL-IRES-tTA2)/wt'
+        
+    Returns:
+    --------
+    dict
+        Dictionary containing parsed genotype components:
+        - driver: First part before semicolon
+        - reporter: Second part after semicolon  
+        - gcamp: Boolean indicating if gcamp is present in reporter
+        - genotype_short: Short form like 'Slc32a1-Oi1'
+    """
+    if not genotype_string or not isinstance(genotype_string, str):
+        return {
+            'driver': None,
+            'reporter': None,
+            'gcamp': None,
+            'genotype_short': None
+        }
+    
+    # Split by semicolon
+    parts = genotype_string.split(';')
+    
+    driver = parts[0].strip() if len(parts) > 0 else None
+    reporter = parts[1].strip() if len(parts) > 1 else None
+    
+    # Extract gcamp substring from reporter (case insensitive)
+    gcamp = None
+    if reporter:
+        import re
+        # Look for gcamp followed by any characters (typically version like 8s, 7f, etc.)
+        gcamp_match = re.search(r'(jGCaMP\w*)', reporter, re.IGNORECASE)
+        if gcamp_match:
+            gcamp = gcamp_match.group(1)
+    
+    # Create short genotype
+    genotype_short = None
+    if driver and reporter:
+        # Extract first part of driver (before first '-' or '/')
+        driver_parts = driver.split('-')
+        driver_short = driver_parts[0] if driver_parts else driver
+        
+        # Extract reporter part before parentheses
+        if '(' in reporter:
+            reporter_short = reporter.split('(')[0]
+        else:
+            reporter_short = reporter.split('-')[0] if '-' in reporter else reporter.split('/')[0]
+        
+        genotype_short = f"{driver_short}-{reporter_short}"
+    
+    return {
+        'driver': driver,
+        'reporter': reporter,
+        'gcamp': gcamp,
+        'genotype_short': genotype_short
+    }
+
+
+# ------------------------------------------------------------------------------------------------
+# Data classes
+# ------------------------------------------------------------------------------------------------
+
+
 @dataclass
 class SpotFiles:
     """
@@ -75,6 +148,37 @@ class ZarrDataFiles:
     def has_channel(self, channel):
         """Check if a specific channel exists in fused data."""
         return channel in self.fused
+
+
+@dataclass
+class MetadataFiles:
+    """
+    Data class to hold paths to metadata JSON files for an HCR dataset round.
+    """
+    
+    acquisition: Optional[Path] = None
+    data_description: Optional[Path] = None
+    metadata_nd: Optional[Path] = None
+    procedures: Optional[Path] = None
+    processing: Optional[Path] = None
+    subject: Optional[Path] = None
+    
+    def __post_init__(self):
+        """Initialize after creation."""
+        pass
+    
+    def get_available_metadata(self):
+        """Get list of available metadata files."""
+        available = []
+        for attr_name, file_path in self.__dict__.items():
+            if file_path is not None and file_path.exists():
+                available.append(attr_name)
+        return available
+    
+    def has_metadata(self, metadata_type):
+        """Check if a specific metadata type exists."""
+        file_path = getattr(self, metadata_type, None)
+        return file_path is not None and file_path.exists()
 
 
 @dataclass
@@ -143,6 +247,7 @@ class HCRRound:
         spot_detection_files: Dict[str, "SpotDetection"],
         processing_manifest: dict,
         tile_alignment_files: "TileAlignmentFiles" = None,
+        metadata_files: "MetadataFiles" = None,
     ):
         """
         Initialize HCRRound.
@@ -165,6 +270,8 @@ class HCRRound:
             Processing manifest data for this round
         tile_alignment_files : TileAlignmentFiles, optional
             Tile alignment files for this round
+        metadata_files : MetadataFiles, optional
+            Metadata JSON files for this round
         """
         self.round_key = round_key
         self.name = name
@@ -174,6 +281,7 @@ class HCRRound:
         self.spot_detection_files = spot_detection_files
         self.processing_manifest = processing_manifest
         self.tile_alignment_files = tile_alignment_files
+        self.metadata_files = metadata_files
 
     def get_channels(self, data_type="fused"):
         """
@@ -416,6 +524,98 @@ class HCRRound:
         
         return spot_channel_gene_map
 
+    def load_metadata(self, metadata_type: str) -> dict:
+        """
+        Load a specific metadata JSON file.
+        
+        Parameters:
+        -----------
+        metadata_type : str
+            Type of metadata to load ('acquisition', 'subject', 'processing', etc.)
+            
+        Returns:
+        --------
+        dict
+            Loaded metadata dictionary
+        """
+        import json
+        
+        if self.metadata_files is None:
+            raise ValueError(f"No metadata files available for round {self.round_key}")
+            
+        if not self.metadata_files.has_metadata(metadata_type):
+            available = self.metadata_files.get_available_metadata()
+            raise ValueError(
+                f"Metadata type '{metadata_type}' not found for round {self.round_key}. "
+                f"Available: {available}"
+            )
+            
+        metadata_path = getattr(self.metadata_files, metadata_type)
+        with open(metadata_path, 'r') as f:
+            return json.load(f)
+    
+    def get_subject_metadata(self, fields: list = None) -> dict:
+        """
+        Extract specific fields from subject metadata.
+        
+        Parameters:
+        -----------
+        fields : list, optional
+            List of fields to extract. If None, extracts common fields.
+            
+        Returns:
+        --------
+        dict
+            Dictionary containing requested subject metadata fields with parsed genotype
+        """
+        if fields is None:
+            fields = ['genotype', 'date_of_birth', 'sex', 'subject_id']
+            
+        try:
+            subject_data = self.load_metadata('subject')
+            result = {}
+            for field in fields:
+                if field in subject_data:
+                    result[field] = subject_data[field]
+                else:
+                    result[field] = None
+            
+            # Parse genotype if present
+            if 'genotype' in result and result['genotype']:
+                parsed_genotype = parse_genotype(result['genotype'])
+                result.update(parsed_genotype)
+                
+            return result
+        except ValueError:
+            # Return None values if subject metadata not available
+            return {field: None for field in fields}
+    
+    def get_metadata_summary(self) -> dict:
+        """
+        Get a summary of available metadata and key information.
+        
+        Returns:
+        --------
+        dict
+            Summary of metadata information
+        """
+        summary = {
+            'available_metadata': [],
+            'subject_info': {},
+            'round_key': self.round_key
+        }
+        
+        if self.metadata_files is not None:
+            summary['available_metadata'] = self.metadata_files.get_available_metadata()
+            
+            # Try to get subject info
+            try:
+                summary['subject_info'] = self.get_subject_metadata()
+            except Exception:
+                summary['subject_info'] = {}
+                
+        return summary
+
     def __dir__(self):
         """
         Return a list of valid attributes and methods for this HCRRound.
@@ -432,6 +632,7 @@ class HCRRound:
             "processing_manifest",
             "segmentation_files",
             "spot_detection_files",
+            "metadata_files",
         ]
 
         # Public methods specific to HCRRound
@@ -444,6 +645,9 @@ class HCRRound:
             "load_cell_centroids",
             "get_cell_info",
             "get_spot_channel_gene_map",
+            "load_metadata",
+            "get_subject_metadata",
+            "get_metadata_summary",
         ]
 
         # Combine attributes first, then methods for organized display
@@ -489,13 +693,14 @@ class HCRDataset:
             Dataset names (for backward compatibility)
         """
         self.mouse_id = mouse_id
-        self.metadata = metadata
+        self.metadata = metadata or {}
         self.dataset_names = dataset_names
 
         # Initialize rounds
         self.rounds = rounds or {}
 
         self._validate_rounds()
+        self._extract_subject_metadata()
 
     def _validate_rounds(self):
         """Validate that rounds have consistent data."""
@@ -506,6 +711,15 @@ class HCRDataset:
         for round_key, round_obj in self.rounds.items():
             if round_obj.processing_manifest is None:
                 print(f"Warning: Processing manifest for round {round_key} is None")
+
+    def _extract_subject_metadata(self):
+        """Extract and store subject metadata in the dataset metadata."""
+        try:
+            subject_metadata = self.get_subject_metadata_summary()
+            if any(v is not None for v in subject_metadata.values()):
+                self.metadata.update(subject_metadata)
+        except Exception:
+            pass  # Continue if metadata extraction fails
 
     def get_rounds(self):
         """Get list of available rounds."""
@@ -645,6 +859,7 @@ class HCRDataset:
         dataframes = {}  # Store dataframes to avoid re-reading
 
         for round_key in spot_files.keys():
+            pm = self.rounds[round_key].processing_manifest
             try:
                 if unmixed:
                     # Read the unmixed cell-by-gene data
@@ -775,6 +990,65 @@ class HCRDataset:
             spots_only=spots_only,
             label_duplicate_genes=label_duplicate_genes,
         )
+
+    def get_subject_metadata_summary(self) -> dict:
+        """
+        Get subject metadata summary across all rounds, with preference for R1.
+        
+        Returns:
+        --------
+        dict
+            Subject metadata dictionary with genotype, date_of_birth, sex, subject_id
+        """
+        # Try to get subject metadata from R1 first, then any available round
+        round_keys = ['R1'] + [k for k in self.rounds.keys() if k != 'R1']
+        
+        for round_key in round_keys:
+            if round_key in self.rounds:
+                try:
+                    subject_metadata = self.rounds[round_key].get_subject_metadata()
+                    if any(v is not None for v in subject_metadata.values()):
+                        return subject_metadata
+                except Exception:
+                    continue
+                    
+        # Return empty if no metadata found
+        return {'genotype': None, 'date_of_birth': None, 'sex': None, 'subject_id': None}
+
+    def get_metadata_summary_all_rounds(self) -> dict:
+        """
+        Get metadata summary for all rounds in the dataset.
+        
+        Returns:
+        --------
+        dict
+            Dictionary with round keys and their metadata summaries
+        """
+        summary = {}
+        for round_key, round_obj in self.rounds.items():
+            summary[round_key] = round_obj.get_metadata_summary()
+        return summary
+
+    def load_metadata_from_round(self, round_key: str, metadata_type: str) -> dict:
+        """
+        Load specific metadata from a specific round.
+        
+        Parameters:
+        -----------
+        round_key : str
+            Round identifier
+        metadata_type : str
+            Type of metadata ('subject', 'acquisition', etc.)
+            
+        Returns:
+        --------
+        dict
+            Loaded metadata dictionary
+        """
+        if round_key not in self.rounds:
+            raise ValueError(f"Round {round_key} not found")
+            
+        return self.rounds[round_key].load_metadata(metadata_type)
 
     def get_segmentation_resolutions(self, round_key=None):
         """
@@ -978,6 +1252,9 @@ class HCRDataset:
             "create_cell_gene_matrix",
             "load_zarr_channel",
             "create_channel_gene_table",
+            "get_subject_metadata_summary",
+            "get_metadata_summary_all_rounds",
+            "load_metadata_from_round",
             "get_segmentation_resolutions",
             "load_segmentation_mask",
             "load_cell_centroids",
@@ -1064,6 +1341,7 @@ def create_hcr_dataset(round_dict: dict,
     segmentation_files = get_segmentation_files(round_dict, data_dir)
     spot_detection_files = get_spot_detection_files(round_dict, data_dir)
     tile_alignment_files = get_tile_alignment_files(round_dict, data_dir)
+    metadata_files = get_metadata_files(round_dict, data_dir)
 
     # Create HCRRound objects
     rounds = {}
@@ -1077,6 +1355,7 @@ def create_hcr_dataset(round_dict: dict,
             segmentation_files=segmentation_files.get(round_key),
             spot_detection_files=spot_detection_files.get(round_key, {}),
             tile_alignment_files=tile_alignment_files.get(round_key),
+            metadata_files=metadata_files.get(round_key),
         )
 
     # Load metadata if available
@@ -1331,6 +1610,44 @@ def get_segmentation_files(round_dict: dict, data_dir: Path):
         )
 
     return segmentation_files
+
+
+def get_metadata_files(round_dict: dict, data_dir: Path):
+    """
+    Get MetadataFiles for each round based on a dictionary mapping round keys to folder names.
+
+    Parameters:
+    -----------
+    round_dict : dict
+        Dictionary mapping round keys (e.g., 'R1', 'R2') to folder names containing the data.
+    data_dir : Path
+        Path to the directory containing the round folders.
+
+    Returns:
+    --------
+    dict
+        Dictionary mapping round keys to MetadataFiles objects containing paths to metadata JSON files.
+    """
+    metadata_files = {}
+
+    for key, folder in round_dict.items():
+        metadata_path = data_dir / folder / "metadata"
+        
+        def check_exist(path):
+            """Helper function to check if file exists and return path or None."""
+            return path if path.exists() else None
+
+        # Check for all standard metadata files
+        metadata_files[key] = MetadataFiles(
+            acquisition=check_exist(metadata_path / "acquisition.json"),
+            data_description=check_exist(metadata_path / "data_description.json"),
+            metadata_nd=check_exist(metadata_path / "metadata.nd.json"),
+            procedures=check_exist(metadata_path / "procedures.json"),
+            processing=check_exist(metadata_path / "processing.json"),
+            subject=check_exist(metadata_path / "subject.json"),
+        )
+
+    return metadata_files
 
 
 def get_tile_alignment_files(round_dict: dict, data_dir: Path):
