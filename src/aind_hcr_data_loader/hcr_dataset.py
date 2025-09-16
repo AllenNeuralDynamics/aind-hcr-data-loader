@@ -47,6 +47,7 @@ class SpotFiles:
     unmixed_spots: Path
     mixed_spots: Path
     spot_unmixing_stats: Path
+    ratios_file: Path = None  # Optional, for ratios if available
     processing_manifest: Path = None  # Optional, for processing manifest if available
 
 
@@ -391,6 +392,30 @@ class HCRRound:
 
         return spots_data
 
+    def get_spot_channel_gene_map(self):
+        """
+        Extract channel-gene mapping for spot channels from this round.
+        
+        Returns:
+        --------
+        dict
+            Mapping of channel to gene name for spot channels only
+        """
+        spot_channels = self.processing_manifest['spot_channels']
+        gene_dict = self.processing_manifest['gene_dict']
+
+        # make sure spot_channels are str, ints in dummy manifest
+        spot_channels = [str(ch) for ch in spot_channels]
+        
+        # Create channel-gene mapping for spot channels only
+        spot_channel_gene_map = {}
+        for channel in spot_channels:
+            if channel in gene_dict:
+                gene_name = gene_dict[channel]['gene']
+                spot_channel_gene_map[channel] = gene_name
+        
+        return spot_channel_gene_map
+
     def __dir__(self):
         """
         Return a list of valid attributes and methods for this HCRRound.
@@ -418,6 +443,7 @@ class HCRRound:
             "load_segmentation_mask",
             "load_cell_centroids",
             "get_cell_info",
+            "get_spot_channel_gene_map",
         ]
 
         # Combine attributes first, then methods for organized display
@@ -1011,7 +1037,10 @@ def _load_spots_for_round(round_item, table_type="mixed_spots"):
     return spots_data
 
 
-def create_hcr_dataset(round_dict: dict, data_dir: Path, mouse_id: str = None):
+def create_hcr_dataset(round_dict: dict, 
+                       data_dir: Path, 
+                       mouse_id: str = None, 
+                       config_path: Path = None) -> HCRDataset:
     """
     Create a complete HCRDataset from round dictionary and data directory.
 
@@ -1054,7 +1083,9 @@ def create_hcr_dataset(round_dict: dict, data_dir: Path, mouse_id: str = None):
     metadata = None
     if mouse_id:
         try:
-            metadata = load_mouse_config(mouse_id=mouse_id)
+            print('mouse_id:', mouse_id)
+            config = load_mouse_config(mouse_id=str(mouse_id),config_path=config_path)
+            metadata = config.get("metadata", {})
         except FileNotFoundError:
             print(f"Could not load metadata for mouse {mouse_id}")
 
@@ -1089,7 +1120,7 @@ def create_hcr_dataset_from_config(
     if data_dir is None:
         data_dir = Path(config.get("data_dir", "../data"))
 
-    return create_hcr_dataset(round_dict, data_dir, mouse_id)
+    return create_hcr_dataset(round_dict, data_dir, mouse_id,config_path=config_path)
 
 
 def load_mouse_config(mouse_id: str, config_path: Path = None) -> dict:
@@ -1436,12 +1467,14 @@ def get_spot_files(round_dict: dict, data_dir: Path):
         unmixed_spots = next(folder_path.absolute().glob("unmixed_spots_*.pkl"), None)
         mixed_spots = next(folder_path.absolute().glob("mixed_spots_*.pkl"), None)
         stats = folder_path / "spot_unmixing_stats.csv"
+        ratios_file = next(folder_path.absolute().glob("*_ratios.txt"), None)
         spot_files[key] = SpotFiles(
             unmixed_cxg=unmixed_cxg,
             mixed_cxg=mixed_cxg,
             unmixed_spots=unmixed_spots,
             mixed_spots=mixed_spots,
             spot_unmixing_stats=stats,
+            ratios_file=ratios_file,
         )
 
         processing_manifest = data_dir / folder / "derived" / "processing_manifest.json"
