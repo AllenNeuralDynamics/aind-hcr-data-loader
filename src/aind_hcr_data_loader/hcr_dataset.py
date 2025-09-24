@@ -29,7 +29,7 @@ import warnings
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 import numpy as np
 import pandas as pd
@@ -476,14 +476,21 @@ class HCRRound:
         print(f"Number of cells in {source} for round {self.round_key}: {len(df_cells)}")
         return df_cells
 
-    def load_spots(self, table_type="mixed_spots"):
+    def load_spots(self, 
+                  table_type: str ="mixed", 
+                  remove_fg_bg_cols: bool = True, 
+                  filter_cell_ids: Optional[List] = None):
         """
         Load spots for this round (non-multiprocessing version).
 
         Parameters:
         -----------
         table_type : str
-            Type of spots to load ('mixed_spots' or 'unmixed_spots')
+            Type of spots to load ('mixed'/'mixed_spots' or 'unmixed'/unmixed_spots')
+        remove_fg_bg_cols : bool
+            Whether to remove columns containing 'fg' or 'bg' substrings to save space
+        filter_cell_ids : list, optional
+            If provided, filter spots to only include these cell IDs
 
         Returns:
         --------
@@ -492,11 +499,43 @@ class HCRRound:
         """
         print(f"Loading {table_type} for round {self.round_key}")
 
+        if table_type not in ["mixed", "unmixed", "mixed_spots", "unmixed_spots"]:
+            raise ValueError("table_type must be 'mixed' or 'unmixed'")
+
+        if table_type == "mixed":
+            table_type = "mixed_spots"
+        else:
+            table_type = "unmixed_spots"
+
         spot_file_path = getattr(self.spot_files, table_type)
 
         with open(spot_file_path, "rb") as f:
-            spots_data = pkl.load(f)
+            spots_data = pd.read_pickle(f)
             spots_data["round"] = self.round_key
+
+        # set 'chan' 
+        categorical_cols = ['chan', 'round', 'unmixed_chan']
+
+        for col in categorical_cols:
+            if col in spots_data.columns:
+                spots_data[col] = spots_data[col].astype('category')
+
+        # remove cols with 'fg' or 'bg' substrings, save space
+        if remove_fg_bg_cols:
+            cols_to_remove = [col for col in spots_data.columns if 'fg' in col or 'bg' in col]
+            spots_data = spots_data.drop(columns=cols_to_remove)
+
+        # convert float64 to float32 to save space
+        float_cols = spots_data.select_dtypes(include=['float64']).columns
+        spots_data[float_cols] = spots_data[float_cols].astype('float32')
+
+        spots_data = spots_data.drop(columns=["spot_id"])
+        spots_data = spots_data.reset_index(drop=True)
+
+        # Filter by cell_ids if provided
+        if filter_cell_ids is not None:
+            spots_data = spots_data[spots_data["cell_id"].isin(filter_cell_ids)].reset_index(drop=True)
+            print(f"Filtered spots to {len(spots_data)} entries based on provided cell IDs")
 
         return spots_data
 
@@ -833,7 +872,7 @@ class HCRDataset:
         print(f"Number of coregistered mixed spots: {len(coreg_spots)}")
         return coreg_spots
 
-    def create_cell_gene_matrix(self, unmixed=True, rounds=None):
+    def create_cell_gene_matrix(self, unmixed=True, rounds=None, sort_order='round_chan'):
         """
         Create cell-gene matrix from specified rounds.
 
@@ -843,6 +882,8 @@ class HCRDataset:
             Whether to use unmixed or mixed data
         rounds : list, optional
             Specific rounds to include. If None, uses all rounds.
+        sort_order : str
+            'auto' to sort genes alphabetically, 'round_chan' to keep round order, or None for no sorting
 
         Returns:
         --------
