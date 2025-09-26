@@ -661,6 +661,18 @@ class HCRDataset:
 
             # Merge with cell_gene table to get channels for genes in this round
             df['round'] = round_key  # Add round info
+
+            #### HACK ###
+            if 'gene_0' in df.gene.unique(): 
+                missing_gene_map = {'gene_0': 'Tac1', 
+                    'gene_1': 'Crh', 
+                    'gene_2': 'Calb1', 
+                    'gene_3': 'Calb2', 
+                    'gene_4': 'Npy', }
+
+                df['gene'] = [missing_gene_map[fake_gene] for fake_gene in df['gene'].values]
+            
+
             df = df.merge(channel_gene_table, on=['round', 'gene'])
 
             print(f"Round {round_key} has these genes: {df['gene'].unique()}")
@@ -801,9 +813,11 @@ class HCRDataset:
         processing_manifests = {
             k: round_obj.processing_manifest for k, round_obj in self.rounds.items()
         }
-        return create_channel_gene_table_from_manifests(
+        channel_gene_table = create_channel_gene_table_from_manifests(
             processing_manifests, spots_only=spots_only
         )
+
+        return channel_gene_table
 
     def get_segmentation_resolutions(self, round_key=None):
         """
@@ -1265,6 +1279,37 @@ def create_channel_gene_table_from_manifests(
 
     for round_key, manifest in processing_manifests.items():
         gene_dict = manifest.get("gene_dict", {})
+        print(list(gene_dict.values()))
+
+        ### Hack for cases where genes arent correct in metadata - must enter here manually for the affected round
+        if 'gene_0' in [row['gene'] for row in list(gene_dict.values())]: 
+            print('gene names missing for', round_key, 'using hard coded values in create_channel_gene_table_from_manifests')
+            gene_dict = {"488": {
+                "gene": "Tac1",
+                "barcode": "",
+                "fluorophore": "",
+                "wavelength": "488"},
+            "514": {
+                "gene": "Crh",
+                "barcode": "",
+                "fluorophore": "",
+                "wavelength": "514"},
+            "561": {
+                "gene": "Calb1",
+                "barcode": "",
+                "fluorophore": "",
+                "wavelength": "561"},
+            "594": {
+                "gene": "Calb2",
+                "barcode": "",
+                "fluorophore": "",
+                "wavelength": "594"},
+            "638": {
+                "gene": "Npy",
+                "barcode": "",
+                "fluorophore": "",
+                "wavelength": "638"}
+            }
 
         for channel, details in gene_dict.items():
             data.append({"round": round_key, "channel": channel, "gene": details.get("gene", ""), "rd_ch_gene": round_key+'-'+channel+'-'+details.get("gene", "")})
