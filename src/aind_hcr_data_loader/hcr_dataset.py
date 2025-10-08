@@ -824,7 +824,7 @@ class HCRDataset:
 
             return all_cells_df
 
-    def load_all_rounds_spots_mp(self, table_type="mixed_spots"):
+    def load_all_rounds_spots_mp(self, table_type="mixed_spots",filter_cell_ids=None):
         """
         Load all spots from the dataset in parallel.
 
@@ -843,7 +843,7 @@ class HCRDataset:
 
         # Use multiprocessing to load spots from all rounds
         pool = mp.Pool(processes=min(len(self.rounds), mp.cpu_count()))
-        process_round = partial(_load_spots_for_round, table_type=table_type)
+        process_round = partial(_load_spots_for_round, table_type=table_type,filter_cell_ids=filter_cell_ids)
         all_spots_list = pool.map(process_round, round_items)
         pool.close()
         pool.join()
@@ -1321,7 +1321,7 @@ class HCRDataset:
 # ------------------------------------------------------------------------------------------------
 
 
-def _load_spots_for_round(round_item, table_type="mixed_spots"):
+def _load_spots_for_round(round_item, table_type="mixed_spots",filter_cell_ids=None):
     """
     Helper function for multiprocessing to load spots for a single round.
 
@@ -1351,6 +1351,10 @@ def _load_spots_for_round(round_item, table_type="mixed_spots"):
     with open(spot_file_path, "rb") as f:
         spots_data = pkl.load(f)
         spots_data["round"] = round_key
+
+    if filter_cell_ids is not None:
+            spots_data = spots_data[spots_data["cell_id"].isin(filter_cell_ids)].reset_index(drop=True)
+            print(f"Filtered spots to {len(spots_data)} entries based on provided cell IDs")
 
     return spots_data
 
