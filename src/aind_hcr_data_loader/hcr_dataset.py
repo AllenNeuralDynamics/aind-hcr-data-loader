@@ -1356,6 +1356,18 @@ def _load_spots_for_round(round_item, table_type="mixed_spots",filter_cell_ids=N
             spots_data = spots_data[spots_data["cell_id"].isin(filter_cell_ids)].reset_index(drop=True)
             print(f"Filtered spots to {len(spots_data)} entries based on provided cell IDs")
 
+    # add gene col
+    chan_gene_map = round_obj.get_spot_channel_gene_map()
+    if "unmixed_chan" in spots_data.columns:
+        spots_data["unmixed_gene"] = spots_data["unmixed_chan"].map(chan_gene_map)
+        # categorical
+        spots_data["unmixed_gene"] = spots_data["unmixed_gene"].astype('category')
+    if "chan" in spots_data.columns:
+        spots_data["mixed_gene"] = spots_data["chan"].map(chan_gene_map)
+        # categorical
+        spots_data["mixed_gene"] = spots_data["mixed_gene"].astype('category')
+
+
     return spots_data
 
 
