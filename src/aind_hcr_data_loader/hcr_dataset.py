@@ -529,13 +529,25 @@ class HCRRound:
         float_cols = spots_data.select_dtypes(include=['float64']).columns
         spots_data[float_cols] = spots_data[float_cols].astype('float32')
 
-        spots_data = spots_data.drop(columns=["spot_id"])
-        spots_data = spots_data.reset_index(drop=True)
+        # drop z_center	y_center x_center
+        spots_data = spots_data.drop(columns=["z_center", "y_center", "x_center"], errors='ignore')
 
         # Filter by cell_ids if provided
         if filter_cell_ids is not None:
             spots_data = spots_data[spots_data["cell_id"].isin(filter_cell_ids)].reset_index(drop=True)
             print(f"Filtered spots to {len(spots_data)} entries based on provided cell IDs")
+
+        # make explicit index columns
+        spots_data = spots_data.drop(columns=["spot_id"])
+        spots_data = spots_data.reset_index(drop=False).rename(columns={'index': 'spot_uid_int'})
+
+        spots_data['spot_uid'] = (spots_data['chan'].astype(str) + '_' + 
+                                spots_data['chan_spot_id'].astype(str))
+        # Convert to category for memory efficiency
+        spots_data['spot_uid'] = spots_data['spot_uid'].astype('category')
+        cols = list(spots_data.columns)
+        cols.insert(0, cols.pop(cols.index('spot_uid')))
+        spots_data = spots_data[cols]
 
         return spots_data
 
