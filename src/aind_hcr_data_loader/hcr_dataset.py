@@ -502,9 +502,9 @@ class HCRRound:
         if table_type not in ["mixed", "unmixed", "mixed_spots", "unmixed_spots"]:
             raise ValueError("table_type must be 'mixed' or 'unmixed'")
 
-        if table_type == "mixed":
+        if table_type in ("mixed", "mixed_spots"):
             table_type = "mixed_spots"
-        else:
+        elif table_type in ("unmixed", "unmixed_spots"):
             table_type = "unmixed_spots"
 
         spot_file_path = getattr(self.spot_files, table_type)
