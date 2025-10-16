@@ -8,6 +8,16 @@
 ![Python](https://img.shields.io/badge/python->=3.10-blue?logo=python)
 
 ## Change log
+**v0.4.0 (10/16/2025)**
++ extract tile overlap boundaries
++ adds ROI overlap calculation and filtering plus duplicate bbox plotting function.
++ added linear unmixing to single cell plots
++ new dye line plots
++ new pairwise intensity plots
++ added constants.py for channel colormaps
++ gather neuroglancer links
++ flexible figure saving via a new saveable_plot decorator
+
 **v0.3.8 (8/11/2025)**
  + updated how cell info is gathered from segmentation sources (options for r1 centroids.npy file or union of multi-round mixed/unmixed cell_x_gene tables).
  + metrics path to segmentation files
