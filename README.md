@@ -8,7 +8,7 @@
 ![Python](https://img.shields.io/badge/python->=3.10-blue?logo=python)
 
 ## Change log
-**(10/16/2025)**
+**v0.4.0 (10/16/2025)**
 + extract tile overlap boundaries for filtering
 + added linear unmixing to single cell plots
 + new dye line plots
