@@ -248,6 +248,7 @@ class HCRRound:
         processing_manifest: dict,
         tile_alignment_files: "TileAlignmentFiles" = None,
         metadata_files: "MetadataFiles" = None,
+        parent_dataset: Optional["HCRDataset"] = None,
     ):
         """
         Initialize HCRRound.
@@ -272,6 +273,8 @@ class HCRRound:
             Tile alignment files for this round
         metadata_files : MetadataFiles, optional
             Metadata JSON files for this round
+        parent_dataset : HCRDataset, optional
+            Reference to the parent HCRDataset object (needed for advanced filtering)
         """
         self.round_key = round_key
         self.name = name
@@ -282,6 +285,7 @@ class HCRRound:
         self.processing_manifest = processing_manifest
         self.tile_alignment_files = tile_alignment_files
         self.metadata_files = metadata_files
+        self.parent_dataset = parent_dataset
 
     def get_channels(self, data_type="fused"):
         """
@@ -479,7 +483,8 @@ class HCRRound:
     def load_spots(self, 
                   table_type: str ="mixed", 
                   remove_fg_bg_cols: bool = True, 
-                  filter_cell_ids: Optional[List] = None):
+                  filter_cell_ids: Optional[List] = None,
+                  roi_filter_type: Optional[str] = None):
         """
         Load spots for this round (non-multiprocessing version).
 
@@ -490,13 +495,26 @@ class HCRRound:
         remove_fg_bg_cols : bool
             Whether to remove columns containing 'fg' or 'bg' substrings to save space
         filter_cell_ids : list, optional
-            If provided, filter spots to only include these cell IDs
+            If provided, filter spots to only include these cell IDs.
+            Cannot be used together with roi_filter_type.
+        roi_filter_type : str, optional
+            Type of ROI filtering to apply: 'volume', 'strict', or None.
+            - 'volume': Filter by cell volume quantiles (0.2-0.95)
+            - 'strict': Filter by soma classification and tile overlap (requires parent_dataset)
+            - None: No filtering (or use filter_cell_ids if provided)
+            Cannot be used together with filter_cell_ids.
 
         Returns:
         --------
         pd.DataFrame
             DataFrame with spots data including round column
         """
+        import aind_hcr_data_loader.filters as hcr_filters
+        
+        # Validate parameters
+        if filter_cell_ids is not None and roi_filter_type is not None:
+            raise ValueError("Cannot use both filter_cell_ids and roi_filter_type. Choose one.")
+        
         print(f"Loading {table_type} for round {self.round_key}")
 
         if table_type not in ["mixed", "unmixed", "mixed_spots", "unmixed_spots"]:
@@ -506,6 +524,37 @@ class HCRRound:
             table_type = "mixed_spots"
         elif table_type in ("unmixed", "unmixed_spots"):
             table_type = "unmixed_spots"
+
+        # Apply ROI filtering if requested
+        if roi_filter_type is not None:
+            if roi_filter_type == "volume":
+                # Get cell info and apply volume filtering
+                cell_info = self.get_cell_info(source="mixed_cxg")
+                filt_cell_info = hcr_filters.filter_cell_info(cell_info)
+                filter_cell_ids = filt_cell_info.cell_id.unique().tolist()
+                print(f"Volume filtering: keeping {len(filter_cell_ids)} cells")
+                
+            elif roi_filter_type == "strict":
+                # Apply soma + overlap filtering (requires parent dataset)
+                if self.parent_dataset is None:
+                    raise ValueError(
+                        "roi_filter_type='strict' requires parent_dataset reference. "
+                        "This is automatically set when using HCRDataset methods."
+                    )
+                
+                # Get all cell IDs from cell info
+                cell_info = self.get_cell_info(source="mixed_cxg")
+                all_cell_ids = cell_info.cell_id.unique().tolist()
+                
+                # Get cells to filter out
+                combined_ids, _, _ = hcr_filters.roi_filter_soma_and_overlap(self.parent_dataset)
+                
+                # Keep cells not in the filter list
+                filter_cell_ids = list(set(all_cell_ids) - set(combined_ids))
+                print(f"Strict filtering: keeping {len(filter_cell_ids)}/{len(all_cell_ids)} cells")
+                
+            else:
+                raise ValueError(f"roi_filter_type must be 'volume', 'strict', or None, got {roi_filter_type}")
 
         spot_file_path = getattr(self.spot_files, table_type)
 
@@ -836,7 +885,7 @@ class HCRDataset:
 
             return all_cells_df
 
-    def load_all_rounds_spots_mp(self, table_type="mixed_spots",filter_cell_ids=None):
+    def load_all_rounds_spots_mp(self, table_type="mixed_spots", filter_cell_ids=None, roi_filter_type=None):
         """
         Load all spots from the dataset in parallel.
 
@@ -844,18 +893,31 @@ class HCRDataset:
         -----------
         table_type : str
             Type of spots to load ('mixed_spots' or 'unmixed_spots')
+        filter_cell_ids : list, optional
+            List of cell IDs to filter. Cannot be used with roi_filter_type.
+        roi_filter_type : str, optional
+            Type of ROI filtering: 'volume', 'strict', or None.
+            Cannot be used with filter_cell_ids.
 
         Returns:
         --------
         pd.DataFrame
             DataFrame containing all spots from all rounds
         """
+        if filter_cell_ids is not None and roi_filter_type is not None:
+            raise ValueError("Cannot use both filter_cell_ids and roi_filter_type. Choose one.")
+        
         # Create list of (round_key, round_obj) tuples for multiprocessing
         round_items = list(self.rounds.items())
 
         # Use multiprocessing to load spots from all rounds
         pool = mp.Pool(processes=min(len(self.rounds), mp.cpu_count()))
-        process_round = partial(_load_spots_for_round, table_type=table_type,filter_cell_ids=filter_cell_ids)
+        process_round = partial(
+            _load_spots_for_round, 
+            table_type=table_type,
+            filter_cell_ids=filter_cell_ids,
+            roi_filter_type=roi_filter_type
+        )
         all_spots_list = pool.map(process_round, round_items)
         pool.close()
         pool.join()
@@ -968,6 +1030,91 @@ class HCRDataset:
         pivot_df = pivot_df.fillna(0)
 
         return pivot_df
+
+    def create_cell_gene_matrix_with_spots(
+        self,
+        table_type: str = "mixed_spots",
+        roi_filter_type: str = "strict",
+        return_spots: bool = True,
+        rounds: Optional[List[str]] = None
+    ):
+        """
+        Create cell-gene matrix from spots with optional ROI filtering.
+        
+        This is a convenience method that combines spot loading, filtering, and 
+        cell-gene matrix creation in one step. It replaces the external 
+        make_cell_x_gene_from_spots() utility function.
+        
+        Parameters:
+        -----------
+        table_type : str
+            Type of spots to load: 'mixed_spots' or 'unmixed_spots'
+        roi_filter_type : str
+            Type of ROI filtering to apply:
+            - 'volume': Filter by cell volume quantiles (0.2-0.95)
+            - 'strict': Filter by soma classification and tile overlap
+            - None: No filtering
+        return_spots : bool
+            If True, return both (cell_x_gene, spots_df)
+            If False, return only cell_x_gene
+        rounds : list, optional
+            List of round keys to include. If None, uses all rounds.
+            
+        Returns:
+        --------
+        pd.DataFrame or tuple
+            If return_spots=True: (cell_x_gene_df, spots_df)
+            If return_spots=False: cell_x_gene_df
+            
+        Examples:
+        ---------
+        >>> # Get cell×gene matrix with strict filtering
+        >>> cxg, spots = ds.create_cell_gene_matrix_with_spots(
+        ...     table_type="mixed_spots",
+        ...     roi_filter_type="strict",
+        ...     return_spots=True
+        ... )
+        
+        >>> # Get just the matrix with volume filtering
+        >>> cxg = ds.create_cell_gene_matrix_with_spots(
+        ...     table_type="unmixed_spots",
+        ...     roi_filter_type="volume",
+        ...     return_spots=False
+        ... )
+        """
+        # Determine which channel column to use
+        channel_col = "unmixed_chan" if table_type == "unmixed_spots" else "chan"
+        gene_col = "unmixed_gene" if table_type == "unmixed_spots" else "mixed_gene"
+        
+        # Load spots with filtering
+        spots_df = self.load_all_rounds_spots_mp(
+            table_type=table_type,
+            roi_filter_type=roi_filter_type
+        )
+        
+        # Filter to specific rounds if requested
+        if rounds is not None:
+            spots_df = spots_df[spots_df['round'].isin(rounds)]
+        
+        # Create cell × gene matrix
+        # The gene column should already be added by _load_spots_for_round
+        if gene_col not in spots_df.columns:
+            # Fallback: add gene names manually if not present
+            for round_key in spots_df['round'].unique():
+                chan_gene_map = self.rounds[round_key].get_spot_channel_gene_map()
+                round_mask = spots_df['round'] == round_key
+                spots_df.loc[round_mask, gene_col] = spots_df.loc[round_mask, channel_col].map(chan_gene_map)
+        
+        # Group by cell and gene to count spots
+        cell_x_gene = spots_df.groupby(['cell_id', gene_col]).size().reset_index(name='spot_count')
+        cell_x_gene = cell_x_gene.rename(columns={gene_col: 'gene'})
+        
+        print(f"Created cell×gene matrix: {cell_x_gene['cell_id'].nunique()} cells × {cell_x_gene['gene'].nunique()} genes")
+        
+        if return_spots:
+            return cell_x_gene, spots_df
+        else:
+            return cell_x_gene
 
     # TODO: may need dask?
     def load_zarr_channel(self, round_key, channel, data_type="fused", pyramid_level=0):
@@ -1333,7 +1480,7 @@ class HCRDataset:
 # ------------------------------------------------------------------------------------------------
 
 
-def _load_spots_for_round(round_item, table_type="mixed_spots",filter_cell_ids=None):
+def _load_spots_for_round(round_item, table_type="mixed_spots", filter_cell_ids=None, roi_filter_type=None):
     """
     Helper function for multiprocessing to load spots for a single round.
 
@@ -1343,6 +1490,10 @@ def _load_spots_for_round(round_item, table_type="mixed_spots",filter_cell_ids=N
         Tuple of (round_key, round_obj)
     table_type : str
         Type of spots to load ('mixed_spots' or 'unmixed_spots')
+    filter_cell_ids : list, optional
+        List of cell IDs to filter
+    roi_filter_type : str, optional
+        Type of ROI filtering ('volume', 'strict', or None)
 
     Returns:
     --------
@@ -1364,9 +1515,18 @@ def _load_spots_for_round(round_item, table_type="mixed_spots",filter_cell_ids=N
         spots_data = pkl.load(f)
         spots_data["round"] = round_key
 
-    if filter_cell_ids is not None:
-            spots_data = spots_data[spots_data["cell_id"].isin(filter_cell_ids)].reset_index(drop=True)
-            print(f"Filtered spots to {len(spots_data)} entries based on provided cell IDs")
+    # Apply filtering - either explicit cell IDs or roi_filter_type
+    if roi_filter_type is not None:
+        # Delegate to load_spots method which handles the filtering logic
+        spots_data = round_obj.load_spots(
+            table_type=table_type,
+            roi_filter_type=roi_filter_type,
+            remove_fg_bg_cols=False  # Don't remove columns here, will be done later if needed
+        )
+        # Note: load_spots already adds the 'round' column
+    elif filter_cell_ids is not None:
+        spots_data = spots_data[spots_data["cell_id"].isin(filter_cell_ids)].reset_index(drop=True)
+        print(f"Filtered spots to {len(spots_data)} entries based on provided cell IDs")
 
     # add gene col
     chan_gene_map = round_obj.get_spot_channel_gene_map()
@@ -1412,7 +1572,7 @@ def create_hcr_dataset(round_dict: dict,
     tile_alignment_files = get_tile_alignment_files(round_dict, data_dir)
     metadata_files = get_metadata_files(round_dict, data_dir)
 
-    # Create HCRRound objects
+    # Create HCRRound objects (without parent_dataset initially)
     rounds = {}
     for round_key, folder_name in round_dict.items():
         rounds[round_key] = HCRRound(
@@ -1437,11 +1597,18 @@ def create_hcr_dataset(round_dict: dict,
         except FileNotFoundError:
             print(f"Could not load metadata for mouse {mouse_id}")
 
-    return HCRDataset(
+    # Create dataset
+    dataset = HCRDataset(
         rounds=rounds,
         mouse_id=mouse_id,
         metadata=metadata,
     )
+    
+    # Set parent_dataset reference in each round (for advanced filtering)
+    for round_obj in dataset.rounds.values():
+        round_obj.parent_dataset = dataset
+    
+    return dataset
 
 
 def create_hcr_dataset_from_config(

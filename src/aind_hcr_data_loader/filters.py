@@ -137,3 +137,30 @@ def load_tile_overlaps(ds, round_key):
     overlap_bbox_array = ta.get_overlap_bbox_array_from_dict(stitched_xml, pairs)
     
     return stitched_xml, pairs, overlap_regions, overlap_bbox_array
+
+
+def filter_cell_info(cell_info, q1=0.2, q2=0.95):
+    """
+    Filter cells based on volume quantiles.
+    
+    Parameters
+    ----------
+    cell_info : pd.DataFrame
+        DataFrame with cell information including 'volume' column
+    q1 : float
+        Lower quantile threshold (default: 0.2)
+    q2 : float
+        Upper quantile threshold (default: 0.95)
+    
+    Returns
+    -------
+    pd.DataFrame
+        Filtered cell info dataframe
+    """
+    n_cells = cell_info.shape[0]
+    cell_info = cell_info[
+        (cell_info["volume"] > cell_info["volume"].quantile(q1))
+        & (cell_info["volume"] < cell_info["volume"].quantile(q2))
+    ]
+    print(f"Kept {cell_info.shape[0]} cells out of {n_cells} total cells, based on volume quantiles {q1} and {q2}.")
+    return cell_info
