@@ -57,10 +57,12 @@ import joblib
 # For psuedolabeling
 # ---
 def volume_filter(df):
-    vol_low = np.percentile(df["volume_um"].values, 10)
-    vol_high = np.percentile(df["volume_um"].values, 98)
+    per_low = 10
+    per_high = 98
+    vol_low = np.percentile(df["volume_um"].values, per_low)
+    vol_high = np.percentile(df["volume_um"].values, per_high)
     df_filtered = df[(df["volume_um"] >= vol_low) & (df["volume_um"] <= vol_high)]
-    print(f"Filtered {len(df_filtered)} / {len(df)} cells by volume")
+    print(f"Filtered out by volume ({per_low}-{per_high} percentile): {len(df_filtered):,}")
 
     return df_filtered
 
@@ -680,14 +682,15 @@ def predict_soma_labels(
     # Print summary
     n_soma = labels.sum()
     n_total = len(labels)
-    print(f"Inference complete on {n_total} samples")
-    print(f"Predicted soma: {n_soma} ({100*n_soma/n_total:.2f}%)")
-    print(f"Predicted non-soma: {n_total - n_soma} ({100*(n_total-n_soma)/n_total:.2f}%)")
-    print(f"\nProbability statistics:")
-    print(f"  Mean: {proba.mean():.4f}")
-    print(f"  Median: {np.median(proba):.4f}")
-    print(f"  Min: {proba.min():.4f}")
-    print(f"  Max: {proba.max():.4f}")
+    print(f"Inference complete on {n_total:,} rois")
+    print(f"Predicted soma: {n_soma:,} ({100*n_soma/n_total:.2f}%)")
+    print(f"Predicted non-soma: {n_total - n_soma:,} ({100*(n_total-n_soma)/n_total:.2f}%)")
+    print(f"-" * 40)
+    # print(f"\nProbability statistics:")
+    # print(f"  Mean: {proba.mean():.4f}")
+    # print(f"  Median: {np.median(proba):.4f}")
+    # print(f"  Min: {proba.min():.4f}")
+    # print(f"  Max: {proba.max():.4f}")
     
     return df_pred
 
@@ -755,11 +758,11 @@ def load_soma_classifier(model_path: Path = None) -> Dict:
         model_path = Path(model_path)
 
     bundle = joblib.load(model_path)
-
-    print(f"✓ Loaded classifier from {model_path}")
-    print(f"  Features ({len(bundle['feat_cols'])}): {bundle['feat_cols']}")
-    if 'cv_metrics' in bundle:
-        print(f"  ROC-AUC: {bundle['cv_metrics']['mean']['roc_auc']:.4f}")
+    print(f"-" * 40)
+    print(f"✓ Loaded classifier from {model_path.name}")
+    #print(f"  Features ({len(bundle['feat_cols'])}): {bundle['feat_cols']}")
+    #if 'cv_metrics' in bundle:
+    #    print(f"  ROC-AUC: {bundle['cv_metrics']['mean']['roc_auc']:.4f}")
 
     return bundle
 
