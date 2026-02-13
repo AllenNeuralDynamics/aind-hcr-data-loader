@@ -914,7 +914,7 @@ class HCRDataset:
             Additional arguments passed to roi_filter_comprehensive:
             - soma_threshold: float, default=0.8
             - edge_xy_threshold: float, default=10.0
-            - edge_z_threshold: float, default=100.0
+            - edge_z_threshold: float, default=10.0
             - overlap_threshold: float, default=0.1
             - metrics_base_path: str
         

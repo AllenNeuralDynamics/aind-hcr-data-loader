@@ -31,7 +31,7 @@ def roi_filter_comprehensive(
     metrics_base_path: str = "/root/capsule/scratch/shape_metrics",
     soma_threshold: float = 0.8,
     edge_xy_threshold: float = 10.0,
-    edge_z_threshold: float = 100.0,
+    edge_z_threshold: float = 10.0,
     overlap_threshold: float = 0.1,
     verbose: bool = True
 ):
@@ -56,7 +56,7 @@ def roi_filter_comprehensive(
         Confidence threshold for soma classifier
     edge_xy_threshold : float, default=10.0
         Distance threshold for XY edge detection (pixels)
-    edge_z_threshold : float, default=100.0
+    edge_z_threshold : float, default=10.0
         Distance threshold for Z edge detection (pixels)
     overlap_threshold : float, default=0.1
         Overlap fraction threshold for tile boundary filtering
@@ -390,12 +390,12 @@ class EdgeROIClassifier:
     def __init__(
         self,
         xy_distance_threshold: float = 10.0,
-        z_distance_threshold: float = 100.0,
+        z_distance_threshold: float = 10.0,
         xy_percentile: float = 1.0,
-        z_n_slices: int = 100,
+        z_n_slices: int = 250,
         z_percentile_low: float = 1.0,
         z_percentile_high: float = 99.0,
-        z_smooth_window: int = 21,
+        z_smooth_window: int = 8,
         z_smooth_method: Literal['savgol', 'median'] = 'savgol',
         savgol_order: int = 3
     ):
@@ -406,17 +406,17 @@ class EdgeROIClassifier:
         ----------
         xy_distance_threshold : float, default=10
             Distance from XY boundary to classify as edge (pixels)
-        z_distance_threshold : float, default=100
+        z_distance_threshold : float, default=10
             Distance from Z boundary to classify as edge (pixels)
         xy_percentile : float, default=1
             Percentile for XY bounding box (0-100)
-        z_n_slices : int, default=100
+        z_n_slices : int, default=250
             Number of slices for Z percentile computation
         z_percentile_low : float, default=1
             Lower percentile for Z boundaries (0-100)
         z_percentile_high : float, default=99
             Upper percentile for Z boundaries (0-100)
-        z_smooth_window : int, default=21
+        z_smooth_window : int, default=8
             Smoothing window size (must be odd for savgol)
         z_smooth_method : {'savgol', 'median'}, default='savgol'
             Smoothing method for Z boundaries
@@ -824,6 +824,150 @@ class EdgeROIClassifier:
         axes[2].set_title('Distance Distribution')
         axes[2].legend()
         axes[2].set_yscale('log')
+        
+        plt.tight_layout()
+        return fig, axes
+    
+    @saveable_plot()
+    def plot_all_orientations(
+        self,
+        df: pd.DataFrame,
+        distance_threshold: Optional[float] = None,
+        figsize: Tuple[int, int] = (20, 12)
+    ) -> Tuple[plt.Figure, np.ndarray]:
+        """
+        Visualize edge classification in all three orientations in a single figure.
+        
+        Creates a 3x3 grid showing boundary detection, classification, and distance
+        distribution for ZX, ZY, and XY planes.
+        
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Classified dataframe from classify()
+        distance_threshold : float, optional
+            Distance threshold to show. If None, uses stored thresholds
+        figsize : tuple, default=(20, 12)
+            Figure size
+            
+        Returns
+        -------
+        fig : matplotlib.figure.Figure
+            Figure object
+        axes : np.ndarray
+            2D array of axes (3 rows x 3 columns)
+        """
+        if not hasattr(df, '_boundary_info'):
+            raise ValueError(
+                "DataFrame must have _boundary_info attribute. "
+                "Did you forget to call classify()?"
+            )
+        
+        # Create figure with 3 rows (one per orientation) and 3 columns
+        fig, axes = plt.subplots(3, 3, figsize=figsize)
+        
+        orientations = ['ZX', 'ZY', 'XY']
+        zone_colors = {'core': 'blue', 'edge': 'red'}
+        
+        for row_idx, orientation in enumerate(orientations):
+            orientation_key = orientation.lower()
+            boundary_info = df._boundary_info[orientation_key]
+            
+            # Get appropriate threshold
+            if distance_threshold is None and hasattr(df, '_thresholds'):
+                if orientation == 'XY':
+                    thresh = df._thresholds['xy']
+                else:
+                    thresh = df._thresholds['z']
+            else:
+                thresh = distance_threshold or 50
+            
+            # Get column names
+            if orientation == 'XY':
+                x_col, y_col = 'centroid_x', 'centroid_y'
+                dist_col = 'distance_to_edge_xy'
+            elif orientation == 'ZX':
+                x_col, y_col = 'centroid_z', 'centroid_x'
+                dist_col = 'distance_to_edge_zx'
+            elif orientation == 'ZY':
+                x_col, y_col = 'centroid_z', 'centroid_y'
+                dist_col = 'distance_to_edge_zy'
+            
+            # Column 0: Scatter with boundary curves
+            ax0 = axes[row_idx, 0]
+            ax0.scatter(
+                df[x_col], df[y_col], 
+                s=0.5, alpha=0.3, c='blue', rasterized=True
+            )
+            
+            if boundary_info.get('method') == 'percentile_z_only':
+                slice_centers = boundary_info['slice_centers']
+                z_low = boundary_info['z_low']
+                z_high = boundary_info['z_high']
+                
+                ax0.plot(z_low, slice_centers, 'r-', linewidth=2)
+                ax0.plot(z_high, slice_centers, 'r-', linewidth=2)
+                ax0.fill_betweenx(slice_centers, z_low, z_high, 
+                                 color='red', alpha=0.1)
+                ax0.set_title(f'{orientation} - Boundary Detection')
+                
+            elif boundary_info.get('method') == 'bounding_box':
+                x_min = boundary_info.get('x_min')
+                x_max = boundary_info.get('x_max')
+                y_min = boundary_info.get('y_min')
+                y_max = boundary_info.get('y_max')
+                
+                if x_min is not None:
+                    ax0.axvline(x_min, color='red', linewidth=2)
+                    ax0.axvline(x_max, color='red', linewidth=2)
+                    ax0.axhline(y_min, color='red', linewidth=2)
+                    ax0.axhline(y_max, color='red', linewidth=2)
+                ax0.set_title(f'{orientation} - Bounding Box')
+            
+            ax0.set_xlabel(x_col)
+            ax0.set_ylabel(y_col)
+            ax0.set_aspect('equal')
+            
+            # Column 1: ROIs colored by edge zone
+            ax1 = axes[row_idx, 1]
+            for zone, color in zone_colors.items():
+                mask = df['edge_zone'] == zone
+                n = mask.sum()
+                ax1.scatter(
+                    df.loc[mask, x_col], 
+                    df.loc[mask, y_col],
+                    s=1, alpha=0.4, c=color, 
+                    label=f'{zone} (n={n:,})', 
+                    rasterized=True
+                )
+            
+            # Overlay boundary curves
+            if boundary_info.get('method') == 'percentile_z_only':
+                ax1.plot(z_low, slice_centers, 'k-', linewidth=1, alpha=0.5)
+                ax1.plot(z_high, slice_centers, 'k-', linewidth=1, alpha=0.5)
+            
+            ax1.legend(markerscale=5, loc='best')
+            ax1.set_title(f'{orientation} - Classification (t={thresh} px)')
+            ax1.set_xlabel(x_col)
+            ax1.set_ylabel(y_col)
+            ax1.set_aspect('equal')
+            
+            # Column 2: Distance distribution
+            ax2 = axes[row_idx, 2]
+            ax2.hist(df[dist_col], bins=100, edgecolor='none', alpha=0.7)
+            ax2.axvline(thresh, color='orange', linestyle='--', 
+                       linewidth=2, label=f'Edge threshold ({thresh} px)')
+            ax2.axvline(0, color='red', linestyle='-', linewidth=2, 
+                       alpha=0.5, label='Boundary')
+            ax2.set_xlabel(f'Distance to Edge')
+            ax2.set_ylabel('Count')
+            ax2.set_title(f'{orientation} - Distance Distribution')
+            ax2.legend()
+            ax2.set_yscale('log')
+        
+        # Add overall title
+        fig.suptitle('Edge ROI Classification - All Orientations', 
+                    fontsize=16, fontweight='bold', y=0.995)
         
         plt.tight_layout()
         return fig, axes
