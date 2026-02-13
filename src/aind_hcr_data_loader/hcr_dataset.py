@@ -498,9 +498,9 @@ class HCRRound:
             If provided, filter spots to only include these cell IDs.
             Cannot be used together with roi_filter_type.
         roi_filter_type : str, optional
-            Type of ROI filtering to apply: 'volume', 'strict', or None.
+            Type of ROI filtering to apply: 'volume', 'comprehensive', or None.
             - 'volume': Filter by cell volume quantiles (0.2-0.95)
-            - 'strict': Filter by soma classification and tile overlap (requires parent_dataset)
+            - 'comprehensive': Filter by soma classification, edge ROIs, and tile overlap (requires parent_dataset)
             - None: No filtering (or use filter_cell_ids if provided)
             Cannot be used together with filter_cell_ids.
 
@@ -534,27 +534,28 @@ class HCRRound:
                 filter_cell_ids = filt_cell_info.cell_id.unique().tolist()
                 print(f"Volume filtering: keeping {len(filter_cell_ids)} cells")
                 
-            elif roi_filter_type == "strict":
-                # Apply soma + overlap filtering (requires parent dataset)
+            elif roi_filter_type == "comprehensive":
+                # Apply comprehensive filtering using parent dataset's helper method
                 if self.parent_dataset is None:
                     raise ValueError(
-                        "roi_filter_type='strict' requires parent_dataset reference. "
+                        "roi_filter_type='comprehensive' requires parent_dataset reference. "
                         "This is automatically set when using HCRDataset methods."
                     )
                 
-                # Get all cell IDs from cell info
+                # Use the helper method for clean filtering
+                filter_cell_ids = self.parent_dataset.get_filtered_cell_ids(
+                    filter_type="comprehensive",
+                    round_key="R1",
+                    verbose=False
+                )
+                
+                # Get total for reporting
                 cell_info = self.get_cell_info(source="mixed_cxg")
                 all_cell_ids = cell_info.cell_id.unique().tolist()
-                
-                # Get cells to filter out
-                combined_ids, _, _ = hcr_filters.roi_filter_soma_and_overlap(self.parent_dataset)
-                
-                # Keep cells not in the filter list
-                filter_cell_ids = list(set(all_cell_ids) - set(combined_ids))
-                print(f"Strict filtering: keeping {len(filter_cell_ids)}/{len(all_cell_ids)} cells")
+                print(f"Comprehensive filtering: keeping {len(filter_cell_ids)}/{len(all_cell_ids)} cells")
                 
             else:
-                raise ValueError(f"roi_filter_type must be 'volume', 'strict', or None, got {roi_filter_type}")
+                raise ValueError(f"roi_filter_type must be 'volume', 'comprehensive', or None, got {roi_filter_type}")
 
         spot_file_path = getattr(self.spot_files, table_type)
 
@@ -885,6 +886,97 @@ class HCRDataset:
 
             return all_cells_df
 
+    def get_filtered_cell_ids(
+        self,
+        filter_type: str = "comprehensive",
+        round_key: str = "R1",
+        verbose: bool = False,
+        **filter_kwargs
+    ) -> List[int]:
+        """
+        Get filtered cell IDs based on quality criteria.
+        
+        This is a convenience method that encapsulates ROI filtering logic,
+        providing a clean interface for filtering cells by various quality metrics.
+        
+        Parameters
+        ----------
+        filter_type : str, default='comprehensive'
+            Type of filtering to apply:
+            - 'volume': Filter by cell volume quantiles (0.2-0.95)
+            - 'comprehensive': Comprehensive filtering (soma + edge + tile overlap)
+            - 'none': No filtering, return all cell IDs
+        round_key : str, default='R1'
+            Round to use for filtering metrics
+        verbose : bool, default=False
+            Print detailed filtering information
+        **filter_kwargs
+            Additional arguments passed to roi_filter_comprehensive:
+            - soma_threshold: float, default=0.8
+            - edge_xy_threshold: float, default=10.0
+            - edge_z_threshold: float, default=100.0
+            - overlap_threshold: float, default=0.1
+            - metrics_base_path: str
+        
+        Returns
+        -------
+        List[int]
+            List of cell IDs that pass filtering criteria
+            
+        Examples
+        --------
+        >>> # Get cells with comprehensive filtering
+        >>> filtered_ids = ds.get_filtered_cell_ids(filter_type='comprehensive')
+        
+        >>> # Get cells with custom thresholds
+        >>> filtered_ids = ds.get_filtered_cell_ids(
+        ...     filter_type='comprehensive',
+        ...     soma_threshold=0.85,
+        ...     edge_xy_threshold=15.0
+        ... )
+        
+        >>> # Get cells with volume filtering only
+        >>> filtered_ids = ds.get_filtered_cell_ids(filter_type='volume')
+        """
+        import aind_hcr_data_loader.filters as hcr_filters
+        
+        # Get all cell IDs
+        cell_info = self.get_cell_info(source="mixed_cxg")
+        all_cell_ids = cell_info.cell_id.unique().tolist()
+        
+        if filter_type == "volume":
+            # Simple volume filtering
+            filt_cell_info = hcr_filters.filter_cell_info(cell_info)
+            filtered_ids = filt_cell_info.cell_id.unique().tolist()
+            if verbose:
+                print(f"Volume filtering: keeping {len(filtered_ids)}/{len(all_cell_ids)} cells")
+            return filtered_ids
+            
+        elif filter_type == "comprehensive":
+            # Comprehensive filtering using roi_filter_comprehensive
+            results = hcr_filters.roi_filter_comprehensive(
+                self,
+                round_key=round_key,
+                verbose=verbose,
+                **filter_kwargs
+            )
+            ids_to_remove = results['filtered_ids']
+            filtered_ids = list(set(all_cell_ids) - set(ids_to_remove))
+            if verbose:
+                print(f"Comprehensive filtering: keeping {len(filtered_ids)}/{len(all_cell_ids)} cells")
+            return filtered_ids
+            
+        elif filter_type == "none":
+            # No filtering
+            if verbose:
+                print(f"No filtering: returning all {len(all_cell_ids)} cells")
+            return all_cell_ids
+            
+        else:
+            raise ValueError(
+                f"filter_type must be 'volume', 'comprehensive', or 'none', got '{filter_type}'"
+            )
+
     def load_all_rounds_spots_mp(self, table_type="mixed_spots", filter_cell_ids=None, roi_filter_type=None):
         """
         Load all spots from the dataset in parallel.
@@ -896,7 +988,7 @@ class HCRDataset:
         filter_cell_ids : list, optional
             List of cell IDs to filter. Cannot be used with roi_filter_type.
         roi_filter_type : str, optional
-            Type of ROI filtering: 'volume', 'strict', or None.
+            Type of ROI filtering: 'volume', 'comprehensive', or None.
             Cannot be used with filter_cell_ids.
 
         Returns:
@@ -1034,7 +1126,7 @@ class HCRDataset:
     def create_cell_gene_matrix_with_spots(
         self,
         table_type: str = "mixed_spots",
-        roi_filter_type: str = "strict",
+        roi_filter_type: str = "comprehensive",
         return_spots: bool = True,
         rounds: Optional[List[str]] = None
     ):
@@ -1052,7 +1144,7 @@ class HCRDataset:
         roi_filter_type : str
             Type of ROI filtering to apply:
             - 'volume': Filter by cell volume quantiles (0.2-0.95)
-            - 'strict': Filter by soma classification and tile overlap
+            - 'comprehensive': Filter by soma classification, edge ROIs, and tile overlap
             - None: No filtering
         return_spots : bool
             If True, return both (cell_x_gene, spots_df)
@@ -1068,10 +1160,10 @@ class HCRDataset:
             
         Examples:
         ---------
-        >>> # Get cell×gene matrix with strict filtering
+        >>> # Get cell×gene matrix with comprehensive filtering
         >>> cxg, spots = ds.create_cell_gene_matrix_with_spots(
         ...     table_type="mixed_spots",
-        ...     roi_filter_type="strict",
+        ...     roi_filter_type="comprehensive",
         ...     return_spots=True
         ... )
         
@@ -1449,7 +1541,10 @@ class HCRDataset:
             "get_channels",
             "has_round",
             "get_cell_info",
+            "get_filtered_cell_ids",
             "create_cell_gene_matrix",
+            "create_cell_gene_matrix_with_spots",
+            "load_all_rounds_spots_mp",
             "load_zarr_channel",
             "create_channel_gene_table",
             "get_subject_metadata_summary",
@@ -1493,7 +1588,7 @@ def _load_spots_for_round(round_item, table_type="mixed_spots", filter_cell_ids=
     filter_cell_ids : list, optional
         List of cell IDs to filter
     roi_filter_type : str, optional
-        Type of ROI filtering ('volume', 'strict', or None)
+        Type of ROI filtering ('volume', 'comprehensive', or None)
 
     Returns:
     --------
