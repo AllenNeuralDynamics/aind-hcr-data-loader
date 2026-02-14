@@ -598,8 +598,7 @@ def process_and_plot_spot_filtering(
         raise ValueError(f"Round {round_key} not found in dataset. Available rounds: {ds.get_rounds()}")
     
     # # Subset by cell IDs for efficiency
-    min_cell, max_cell = cell_id_range
-    plot_cell_ids = list(range(min_cell, max_cell + 1))
+    
     
     # Load only the specific round and cell IDs we need
     spots_df = ds.rounds[round_key].load_spots(
@@ -610,6 +609,8 @@ def process_and_plot_spot_filtering(
 
     # filter for cell_ids
     if cell_id_range is not None:
+        min_cell, max_cell = cell_id_range
+        plot_cell_ids = list(range(min_cell, max_cell + 1))
         spots_df = spots_df[spots_df['cell_id'].isin(plot_cell_ids)]
         spots_df.reset_index(drop=True, inplace=True)
 

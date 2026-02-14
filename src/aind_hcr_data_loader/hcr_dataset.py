@@ -418,7 +418,7 @@ class HCRRound:
 
         return np.load(self.segmentation_files.cell_centroids)
 
-    def get_cell_info(self, source="mixed_cxg"):
+    def get_cell_info(self, source="mixed_cxg", verbose=True):
         """
         Get cell information.
 
@@ -443,18 +443,17 @@ class HCRRound:
         if source not in ["mixed_cxg", "unmixed_cxg", "segmentation"]:
             raise ValueError("Source must be 'mixed_cxg', 'unmixed_cxg', or 'segmentation'")
 
+        # cell x gene table contains rois with actual spots so we generally only needs those
+        warnings.warn(
+                "Getting cell info from cell x gene file. Does not include all segmentation masks; but this is usually fine."
+                )
+
         if source == "unmixed_cxg":
-            print(f"Loading unmixed cxg for round {self.round_key}")
             try:
                 df = pd.read_csv(self.spot_files.unmixed_cxg)
             except Exception as e:
                 print(f"Warning: Error reading unmixed cxg file: {e}")
                 return pd.DataFrame()  # Return empty DataFrame if file does not exist
-
-            # add warning, getting cell info from unmixed cxg
-            warnings.warn(
-                "Getting cell info from unmixed cxg file. Does not include all segmentation masks."
-            )
 
             # Keep only the columns we want
             cols_to_keep = ["cell_id", "volume", "x_centroid", "y_centroid", "z_centroid"]
@@ -477,7 +476,8 @@ class HCRRound:
                 centroids, columns=["z_centroid", "y_centroid", "x_centroid", "cell_id"]
             )
             # Retain the original cell_id values from the centroids data
-        print(f"Number of cells in {source} for round {self.round_key}: {len(df_cells)}")
+        if verbose:
+            print(f"Number of cells in {source} for round {self.round_key}: {len(df_cells)}")
         return df_cells
 
     def load_spots(self, 
@@ -529,7 +529,7 @@ class HCRRound:
         if roi_filter_type is not None:
             if roi_filter_type == "volume":
                 # Get cell info and apply volume filtering
-                cell_info = self.get_cell_info(source="mixed_cxg")
+                cell_info = self.get_cell_info(source="mixed_cxg", verbose=False)
                 filt_cell_info = hcr_filters.filter_cell_info(cell_info)
                 filter_cell_ids = filt_cell_info.cell_id.unique().tolist()
                 print(f"Volume filtering: keeping {len(filter_cell_ids)} cells")
