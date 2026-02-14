@@ -425,9 +425,10 @@ def plot_spot_filtering_pipeline(
         channel_label=channel_label,
         title=f"{mouse_id} - {round_key} - All Spots\nn={n_total:,}",
         save=save,
-        filename=str(output_path / f"{filename_base}_all") if save else None
+        filename=f"{filename_base}_all" if save else None,
+        output_dir=output_path
     )
-    
+
     print(f"  [2/4] Top {percentile_all}th percentile (n={n_p1:,})...")
     fig_percentile = su.plot_filtered_intensities(
         spots_df[spots_df[col_p1]],
@@ -439,7 +440,8 @@ def plot_spot_filtering_pipeline(
         title=f"{mouse_id} - {round_key} - Top {percentile_all}th Percentile\n"
               f"n={n_p1:,} ({100*n_p1/n_total:.1f}%)",
         save=save,
-        filename=str(output_path / f"{filename_base}_p{percentile_all}") if save else None
+        filename=f"{filename_base}_p{percentile_all}" if save else None,
+        output_dir=output_path
     )
     
     print(f"  [3/4] Clean spots (n={n_clean:,})...")
@@ -453,7 +455,8 @@ def plot_spot_filtering_pipeline(
         title=f"{mouse_id} - {round_key} - Clean Spots\n"
               f"n={n_clean:,} ({100*n_clean/n_total:.1f}%)",
         save=save,
-        filename=str(output_path / f"{filename_base}_clean") if save else None
+        filename=f"{filename_base}_clean" if save else None,
+        output_dir=output_path
     )
     
     print(f"  [4/4] Clean + top {percentile_clean}th percentile (n={n_p2:,})...")
@@ -467,7 +470,8 @@ def plot_spot_filtering_pipeline(
         title=f"{mouse_id} - {round_key} - Clean + Top {percentile_clean}th Percentile\n"
               f"n={n_p2:,} ({100*n_p2/n_total:.1f}%)",
         save=save,
-        filename=str(output_path / f"{filename_base}_clean_p{percentile_clean}") if save else None
+        filename=f"{filename_base}_clean_p{percentile_clean}" if save else None,
+        output_dir=output_path
     )
     
     # Collect filepaths if saved
@@ -500,7 +504,7 @@ def plot_spot_filtering_pipeline(
 def process_and_plot_spot_filtering(
     ds,  # HCRDataset object
     round_key: str = "R2",
-    cell_id_range: Tuple[int, int] = (1, 20000),
+    cell_id_range: Tuple[int, int] = None,
     percentile_all: int = 90,
     percentile_clean: int = 50,
     clean_params: Optional[Dict] = None,
@@ -513,10 +517,10 @@ def process_and_plot_spot_filtering(
     **plot_kwargs
 ) -> Dict:
     """
-    Complete pipeline: load data, filter, and plot.
+    Complete pipeline: load data for a specific round, filter, and plot.
     
     This is a convenience function that combines:
-    1. Data loading from HCRDataset
+    1. Per-round spot loading (efficient - only loads requested round and cells)
     2. add_spot_filter_columns() for processing
     3. plot_spot_filtering_pipeline() for visualization
     
@@ -525,9 +529,10 @@ def process_and_plot_spot_filtering(
     ds : HCRDataset
         HCR dataset object
     round_key : str, default="R2"
-        Round to process
+        Round to process (e.g., 'R1', 'R2', 'R3')
     cell_id_range : tuple, default=(1, 20000)
-        (min_cell_id, max_cell_id) for subsetting visualization
+        (min_cell_id, max_cell_id) for subsetting.
+        Only spots from these cells will be loaded (memory efficient).
     percentile_all : int, default=90
         Percentile for all spots filtering
     percentile_clean : int, default=50
@@ -535,7 +540,7 @@ def process_and_plot_spot_filtering(
     clean_params : dict, optional
         Parameters for clean_spots
     save : bool, default=True
-        Whether to save the figure
+        Whether to save the figures
     output_dir : str, default="/root/capsule/scratch/spot_filtering"
         Directory for saved figures
     xlims, ylims, scale, figsize : plotting parameters
@@ -545,27 +550,31 @@ def process_and_plot_spot_filtering(
     -------
     dict
         {
-            'spots_df': DataFrame with filter columns,
-            'fig': matplotlib figure,
-            'axes': subplot axes,
-            'filepath': str (if saved),
-            'stats': dict with filtering statistics
+            'spots_df': DataFrame with filter columns for the requested round/cells,
+            'figures': Dict with 4 figure objects,
+            'filepaths': List of saved file paths (if save=True),
+            'stats': Dict with filtering statistics
         }
+    
+    Notes
+    -----
+    This function is optimized to load only the specific round and cell ID range
+    requested, avoiding the need to load all rounds and then filter.
     
     Examples
     --------
-    >>> # Basic usage
+    >>> # Basic usage - loads only R2, cells 1-20000
     >>> results = process_and_plot_spot_filtering(
     ...     ds,
     ...     round_key="R2",
     ...     save=True
     ... )
-    >>> print(f"Saved to: {results['filepath']}")
+    >>> print(f"Saved to: {results['filepaths']}")
     >>> 
-    >>> # Custom parameters
+    >>> # Custom parameters - loads only R3, cells 1-50000
     >>> results = process_and_plot_spot_filtering(
     ...     ds,
-    ...     round_key="R2",
+    ...     round_key="R3",
     ...     cell_id_range=(1, 50000),
     ...     percentile_all=95,
     ...     percentile_clean=60,
@@ -583,14 +592,27 @@ def process_and_plot_spot_filtering(
     print(f"Cell ID range: {cell_id_range}")
     print("="*60)
     
-    # Step 1: Load spots with comprehensive ROI filtering
+    # Step 1: Load spots for the specific round with comprehensive ROI filtering
     print("\n[1/3] Loading spots...")
-    spots_df = ds.load_all_rounds_spots_mp(
+    if round_key not in ds.rounds:
+        raise ValueError(f"Round {round_key} not found in dataset. Available rounds: {ds.get_rounds()}")
+    
+    # # Subset by cell IDs for efficiency
+    min_cell, max_cell = cell_id_range
+    plot_cell_ids = list(range(min_cell, max_cell + 1))
+    
+    # Load only the specific round and cell IDs we need
+    spots_df = ds.rounds[round_key].load_spots(
         table_type='mixed_spots',
         roi_filter_type='comprehensive'
     )
-    print(f"Loaded {len(spots_df):,} spots across all rounds")
-    
+    #print(f"Loaded {len(spots_df):,} spots for round {round_key}, cells {min_cell}-{max_cell}")
+
+    # filter for cell_ids
+    if cell_id_range is not None:
+        spots_df = spots_df[spots_df['cell_id'].isin(plot_cell_ids)]
+        spots_df.reset_index(drop=True, inplace=True)
+
     # Step 2: Add filter columns
     print("\n[2/3] Adding filter columns...")
     spots_df = add_spot_filter_columns(
@@ -601,21 +623,10 @@ def process_and_plot_spot_filtering(
         verbose=True
     )
     
-    # Subset for plotting
-    min_cell, max_cell = cell_id_range
-    plot_cell_ids = list(range(min_cell, max_cell + 1))
-    spots_df_plot = spots_df[
-        (spots_df["round"] == round_key) &
-        (spots_df["cell_id"].isin(plot_cell_ids))
-    ].copy()
-    
-    print(f"\nSubset for plotting: {len(spots_df_plot):,} spots "
-          f"(round={round_key}, cells {min_cell}-{max_cell})")
-    
-    # Step 3: Plot
+    # Step 3: Plot (use the already filtered data)
     print("\n[3/3] Creating visualizations...")
     figs_dict, _ = plot_spot_filtering_pipeline(
-        spots_df_plot,
+        spots_df,  # Already filtered by round and cell IDs
         mouse_id=ds.mouse_id,
         round_key=round_key,
         percentile_all=percentile_all,
@@ -655,7 +666,6 @@ def process_and_plot_spot_filtering(
     
     return {
         'spots_df': spots_df,
-        'spots_df_plot': spots_df_plot,
         'figures': figs_dict,
         'filepaths': figs_dict.get('filepaths', []),
         'stats': stats
