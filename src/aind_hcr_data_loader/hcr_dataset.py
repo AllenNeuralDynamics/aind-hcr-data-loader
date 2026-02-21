@@ -1123,7 +1123,7 @@ class HCRDataset:
 
         return pivot_df
 
-    def create_cell_gene_matrix_with_spots(
+    def create_cell_gene_matrix_from_spots(
         self,
         table_type: str = "mixed_spots",
         roi_filter_type: str = "comprehensive",

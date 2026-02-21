@@ -1045,3 +1045,42 @@ class EdgeROIClassifier:
                 }
         
         return stats
+
+
+# ---
+# Cell x gene fitlers
+# ---
+
+def get_inhibitory_mask(cxg_df, gene_thresholds=None):
+    """
+    Get mask for inhibitory cells based on gene thresholds (OR logic).
+    A cell is inhibitory if it has >= threshold for ANY specified gene.
+    
+    Parameters
+    ----------
+    cxg_df : pd.DataFrame
+        Cell x gene DataFrame
+    gene_thresholds : dict, optional
+        Dictionary mapping gene names to thresholds.
+        Default: {'Gad2': 50, 'Npy': 50, 'Pvalb': 50, 'Sst': 50, 'Vip': 50}
+    
+    Returns
+    -------
+    mask : pd.Series
+        Boolean mask for inhibitory cells
+    genes_found : list
+        List of gene criteria that were applied
+    """
+    if gene_thresholds is None:
+        gene_thresholds = {'Gad2': 50, 'Npy': 50, 'Pvalb': 50, 'Sst': 50, 'Vip': 50}
+    
+    mask = pd.Series(False, index=cxg_df.index)
+    genes_found = []
+    
+    for gene, threshold in gene_thresholds.items():
+        if gene in cxg_df.columns:
+            gene_mask = cxg_df[gene] >= threshold
+            mask = mask | gene_mask
+            genes_found.append(f"{gene}>={threshold}")
+    
+    return mask, genes_found
