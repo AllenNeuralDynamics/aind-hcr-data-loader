@@ -256,7 +256,7 @@ def filter_tile_boundary_rois(
     overlap_bbox_array = ta.get_overlap_bbox_array_from_dict(stitched_xml, pairs)
 
     # load metrics and upscale
-    metrics_path = Path(f"/root/capsule/scratch/shape_metrics/{ds.rounds[round_key].name}/seg_shape_metrics_pyr2.parquet")
+    metrics_path = Path(metrics_base_path) / ds.rounds[round_key].name / "seg_shape_metrics_pyr2.parquet"
     print(f"Loading metrics from {metrics_path}")
     df = pd.read_parquet(metrics_path)
     centroid_cols = ['centroid_y', 'centroid_x']
