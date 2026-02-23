@@ -783,6 +783,7 @@ class HCRDataset:
         mouse_id: str = None,
         metadata: dict = None,
         dataset_names=None,
+        metrics_base_path: str = None,
     ):
         """
         Initialize HCRDataset.
@@ -797,10 +798,14 @@ class HCRDataset:
             Additional metadata
         dataset_names : optional
             Dataset names (for backward compatibility)
+        metrics_base_path : str, optional
+            Base path to shape metrics directory for comprehensive ROI filtering.
+            If None, comprehensive filtering will not be available.
         """
         self.mouse_id = mouse_id
         self.metadata = metadata or {}
         self.dataset_names = dataset_names
+        self.metrics_base_path = metrics_base_path
 
         # Initialize rounds
         self.rounds = rounds or {}
@@ -959,6 +964,19 @@ class HCRDataset:
             
         elif filter_type == "comprehensive":
             # Comprehensive filtering using roi_filter_comprehensive
+            # Check if metrics_base_path is available
+            if 'metrics_base_path' not in filter_kwargs:
+                if self.metrics_base_path is None:
+                    raise ValueError(
+                        "Comprehensive filtering requires metrics_base_path to be set. "
+                        "Either:\n"
+                        "  1. Set it when creating the dataset: "
+                        "HCRDataset(..., metrics_base_path='/path/to/metrics')\n"
+                        "  2. Pass it as a kwarg: "
+                        "get_filtered_cell_ids(..., metrics_base_path='/path/to/metrics')"
+                    )
+                filter_kwargs['metrics_base_path'] = self.metrics_base_path
+            
             results = hcr_filters.roi_filter_comprehensive(
                 self,
                 round_key=round_key,
@@ -1643,10 +1661,13 @@ def _load_spots_for_round(round_item, table_type="mixed_spots", filter_cell_ids=
     return spots_data
 
 
-def create_hcr_dataset(round_dict: dict, 
-                       data_dir: Path, 
-                       mouse_id: str = None, 
-                       config_path: Path = None) -> HCRDataset:
+def create_hcr_dataset(
+    round_dict: dict, 
+    data_dir: Path, 
+    mouse_id: str = None, 
+    config_path: Path = None,
+    metrics_base_path: str = None
+) -> HCRDataset:
     """
     Create a complete HCRDataset from round dictionary and data directory.
 
@@ -1658,6 +1679,11 @@ def create_hcr_dataset(round_dict: dict,
         Path to the directory containing round folders
     mouse_id : str, optional
         Mouse ID for metadata
+    config_path : Path, optional
+        Path to configuration file
+    metrics_base_path : str, optional
+        Base path to shape metrics directory for comprehensive ROI filtering.
+        If None, comprehensive filtering will not be available.
 
     Returns:
     --------
@@ -1702,6 +1728,7 @@ def create_hcr_dataset(round_dict: dict,
         rounds=rounds,
         mouse_id=mouse_id,
         metadata=metadata,
+        metrics_base_path=metrics_base_path,
     )
     
     # Set parent_dataset reference in each round (for advanced filtering)
@@ -1712,7 +1739,10 @@ def create_hcr_dataset(round_dict: dict,
 
 
 def create_hcr_dataset_from_config(
-    mouse_id: str = "747667", data_dir: Path = None, config_path: Path = None
+    mouse_id: str = "747667", 
+    data_dir: Path = None, 
+    config_path: Path = None,
+    metrics_base_path: str = None
 ) -> HCRDataset:
     """
     Create HCRDataset directly from mouse configuration.
@@ -1723,6 +1753,11 @@ def create_hcr_dataset_from_config(
         Mouse ID to load
     data_dir : Path, optional
         Override data directory from config
+    config_path : Path, optional
+        Path to mouse configuration JSON file
+    metrics_base_path : str, optional
+        Base path to shape metrics directory for comprehensive ROI filtering.
+        If None, comprehensive filtering will not be available.
 
     Returns:
     --------
@@ -1735,7 +1770,13 @@ def create_hcr_dataset_from_config(
     if data_dir is None:
         data_dir = Path(config.get("data_dir", "../data"))
 
-    return create_hcr_dataset(round_dict, data_dir, mouse_id,config_path=config_path)
+    return create_hcr_dataset(
+        round_dict, 
+        data_dir, 
+        mouse_id,
+        config_path=config_path,
+        metrics_base_path=metrics_base_path
+    )
 
 
 def load_mouse_config(mouse_id: str, config_path: Path = None) -> dict:
