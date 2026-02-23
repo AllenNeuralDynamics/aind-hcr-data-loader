@@ -8,6 +8,13 @@
 ![Python](https://img.shields.io/badge/python->=3.10-blue?logo=python)
 
 ## Change log
+
+**v0.5.1 02/23/206**'
++ Added metrics_base_path parameter to HCRDataset for soma shape classifier
++ Added new spot_filters.py module with vectorized percentile filtering and spot quality assessment functions
++ Enhanced filters.py with comprehensive ROI filtering pipeline including soma classification, edge detection, and tile overlap filtering
++ hcr_filters.ipynb notebook for filtering examples
+
 **v0.4.0 (10/16/2025)**
 + extract tile overlap boundaries
 + adds ROI overlap calculation and filtering plus duplicate bbox plotting function.
