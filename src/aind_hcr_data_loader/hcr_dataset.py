@@ -541,11 +541,16 @@ class HCRRound:
                         "roi_filter_type='comprehensive' requires parent_dataset reference. "
                         "This is automatically set when using HCRDataset methods."
                     )
-                
+
+                # Determine which round to use for comprehensive filtering.
+                # Prefer a configurable default_round_key on the parent dataset,
+                # but fall back to 'R1' to preserve existing behavior.
+                round_key = getattr(self.parent_dataset, "default_round_key", "R1")
+
                 # Use the helper method for clean filtering
                 filter_cell_ids = self.parent_dataset.get_filtered_cell_ids(
                     filter_type="comprehensive",
-                    round_key="R1",
+                    round_key=round_key,
                     verbose=False
                 )
                 
