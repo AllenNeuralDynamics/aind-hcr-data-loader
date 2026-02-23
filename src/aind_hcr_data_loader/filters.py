@@ -167,7 +167,7 @@ def roi_filter_comprehensive(
     
     # This method upscales coordinates to pyramid level 0
     metrics_upscaled_df, overlap_roi_ids = filter_tile_boundary_rois(
-        ds, round_key, overlap_threshold=overlap_threshold
+        ds, round_key, overlap_threshold=overlap_threshold, metrics_base_path=metrics_base_path
     )
     
     if verbose:
@@ -223,7 +223,8 @@ def roi_filter_comprehensive(
 def filter_tile_boundary_rois(
     ds: HCRDataset,
     round_key: str,
-    overlap_threshold: float = 0.1
+    overlap_threshold: float = 0.1,
+    metrics_base_path: str = "/root/capsule/scratch/shape_metrics"
 ):
     """
     Filter ROIs that fall within tile overlap regions.
@@ -239,6 +240,8 @@ def filter_tile_boundary_rois(
         The round key (e.g., 'R1', 'R2')
     overlap_threshold : float, default=0.1
         Fraction of ROI overlap required to be filtered (0-1)
+    metrics_base_path : str, default='/root/capsule/scratch/shape_metrics'
+        Base path to shape metrics directory
     
     Returns
     -------
