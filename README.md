@@ -9,7 +9,7 @@
 
 ## Change log
 
-**v0.5.1 02/23/206**'
+**v0.5.1 02/23/2026**
 + Added metrics_base_path parameter to HCRDataset for soma shape classifier
 + Added new spot_filters.py module with vectorized percentile filtering and spot quality assessment functions
 + Enhanced filters.py with comprehensive ROI filtering pipeline including soma classification, edge detection, and tile overlap filtering
