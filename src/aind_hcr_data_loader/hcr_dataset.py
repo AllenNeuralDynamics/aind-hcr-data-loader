@@ -1166,14 +1166,14 @@ class HCRDataset:
         Examples:
         ---------
         >>> # Get cell×gene matrix with comprehensive filtering
-        >>> cxg, spots = ds.create_cell_gene_matrix_with_spots(
+        >>> cxg, spots = ds.create_cell_gene_matrix_from_spots(
         ...     table_type="mixed_spots",
         ...     roi_filter_type="comprehensive",
         ...     return_spots=True
         ... )
         
         >>> # Get just the matrix with volume filtering
-        >>> cxg = ds.create_cell_gene_matrix_with_spots(
+        >>> cxg = ds.create_cell_gene_matrix_from_spots(
         ...     table_type="unmixed_spots",
         ...     roi_filter_type="volume",
         ...     return_spots=False
