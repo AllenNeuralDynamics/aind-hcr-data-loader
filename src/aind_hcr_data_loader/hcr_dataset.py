@@ -1548,7 +1548,7 @@ class HCRDataset:
             "get_cell_info",
             "get_filtered_cell_ids",
             "create_cell_gene_matrix",
-            "create_cell_gene_matrix_with_spots",
+            "create_cell_gene_matrix_from_spots",
             "load_all_rounds_spots_mp",
             "load_zarr_channel",
             "create_channel_gene_table",
