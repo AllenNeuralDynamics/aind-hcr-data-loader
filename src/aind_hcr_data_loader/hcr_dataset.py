@@ -1917,7 +1917,15 @@ def create_channel_gene_table_from_manifests(
             if entry["Gene"] in [d["Gene"] for d in data if d["Round"] != entry["Round"]]:
                 entry["Gene"] += f"-{entry['Round']}"
 
-    return pd.DataFrame(data)
+    df = pd.DataFrame(data)
+
+    # Convenience label combining Round, Channel, and Gene: e.g. "R2_ch647_Gad2"
+    if not df.empty:
+        df["round_channel_gene"] = (
+            df["Round"] + "-" + df["Channel"].astype(str) + "-" + df["Gene"]
+        )
+
+    return df
 
 
 # ------------------------------------------------------------------------------------------------
