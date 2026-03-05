@@ -89,7 +89,7 @@ def roi_filter_comprehensive(
     # 1. Load metrics data
     # -------------------------------------------------------------------------
     dataset_name = ds.rounds[round_key].name
-    metrics_path = Path(metrics_base_path) / dataset_name / "seg_shape_metrics_pyr2.parquet"
+    metrics_path = ds.metrics_base_path / "seg_shape_metrics_pyr2.parquet"
     
     if verbose:
         print(f"\n[1/5] Loading metrics from: {metrics_path}")
