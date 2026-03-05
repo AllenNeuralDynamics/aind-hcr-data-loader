@@ -3,11 +3,18 @@
 [![License](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
 ![Code Style](https://img.shields.io/badge/code%20style-black-black)
 [![semantic-release: angular](https://img.shields.io/badge/semantic--release-angular-e10079?logo=semantic-release)](https://github.com/semantic-release/semantic-release)
-![Interrogate](https://img.shields.io/badge/interrogate-95.9%25-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-27%25-red?logo=codecov)
+![Interrogate](https://img.shields.io/badge/interrogate-96.3%25-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-20%25-red?logo=codecov)
 ![Python](https://img.shields.io/badge/python->=3.10-blue?logo=python)
 
 ## Change log
+
+**v0.5.1 02/23/2026**
++ Added metrics_base_path parameter to HCRDataset for soma shape classifier
++ Added new spot_filters.py module with vectorized percentile filtering and spot quality assessment functions
++ Enhanced filters.py with comprehensive ROI filtering pipeline including soma classification, edge detection, and tile overlap filtering
++ hcr_filters.ipynb notebook for filtering examples
+
 **v0.4.0 (10/16/2025)**
 + extract tile overlap boundaries
 + adds ROI overlap calculation and filtering plus duplicate bbox plotting function.
