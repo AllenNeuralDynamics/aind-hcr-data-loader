@@ -167,7 +167,7 @@ def roi_filter_comprehensive(
     
     # This method upscales coordinates to pyramid level 0
     metrics_upscaled_df, overlap_roi_ids = filter_tile_boundary_rois(
-        ds, round_key, overlap_threshold=overlap_threshold, metrics_base_path=metrics_base_path
+        ds, round_key, overlap_threshold=overlap_threshold, metrics_base_path=ds.metrics_base_path
     )
     
     if verbose:
@@ -259,7 +259,7 @@ def filter_tile_boundary_rois(
     overlap_bbox_array = ta.get_overlap_bbox_array_from_dict(stitched_xml, pairs)
 
     # load metrics and upscale
-    metrics_path = Path(metrics_base_path) / ds.rounds[round_key].name / "seg_shape_metrics_pyr2.parquet"
+    metrics_path = Path(metrics_base_path) / "seg_shape_metrics_pyr2.parquet"
     print(f"Loading metrics from {metrics_path}")
     df = pd.read_parquet(metrics_path)
     centroid_cols = ['centroid_y', 'centroid_x']
