@@ -2347,17 +2347,23 @@ def get_processing_manifests(round_dict: dict, data_dir: Path):
 
     Raises:
     -------
-    AssertionError
-        If any processing manifest is not found
+    FileNotFoundError
+        If no processing manifest is found in either expected location.
     """
     processing_manifests = {}
 
     for key, folder in round_dict.items():
-        manifest_path = data_dir / folder / "derived" / "processing_manifest.json"
+        derived_path = data_dir / folder / "derived" / "processing_manifest.json"
+        root_path = data_dir / folder / "processing_manifest.json"
 
-        if not manifest_path.exists():
-            raise FileNotFoundError(f"Processing manifest not found at {manifest_path}")
-
-        processing_manifests[key] = load_processing_manifest(manifest_path)
+        if derived_path.exists():
+            processing_manifests[key] = load_processing_manifest(derived_path)
+        elif root_path.exists():
+            processing_manifests[key] = load_processing_manifest(root_path)
+        else:
+            raise FileNotFoundError(
+                f"Processing manifest not found for round '{key}'. "
+                f"Checked:\n  {derived_path}\n  {root_path}"
+            )
 
     return processing_manifests
