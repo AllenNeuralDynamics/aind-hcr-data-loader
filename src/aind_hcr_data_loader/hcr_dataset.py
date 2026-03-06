@@ -2255,9 +2255,17 @@ def get_spot_files(round_dict: dict, data_dir: Path):
         folder_path = data_dir / folder / "image_spot_spectral_unmixing"
         unmixed_cxg = folder_path / "unmixed_cell_by_gene.csv"
         mixed_cxg = folder_path / "mixed_cell_by_gene.csv"
-        # Expect only one file for each pattern
-        unmixed_spots = next(folder_path.absolute().glob("unmixed_spots_*.pkl"), None)
-        mixed_spots = next(folder_path.absolute().glob("mixed_spots_*.pkl"), None)
+        # Expect only one file for each pattern - THIS IS NOT TRUE ANYMORE
+        # As of 3/5/26, there are multiple unmixed and mixed spot files with different names. 
+        # For R1, there is only one file, but for other rounds there are multiple, 
+        # so we need to get the one for that specific round using explicit naming 
+        if key == 'R1':
+            mixed_spots = next(folder_path.absolute().glob("mixed_spots_*.pkl"), None)
+            unmixed_spots = next(folder_path.absolute().glob("unmixed_spots_*.pkl"), None)
+        else: 
+            mixed_spots = next(folder_path.absolute().glob("mixed_spots_"+key+".pkl"), None)
+            unmixed_spots = next(folder_path.absolute().glob("unmixed_spots_"+key+".pkl"), None)
+        # Note that this "fix" will fail if the naming scheme for spot files changes again
         stats = folder_path / "spot_unmixing_stats.csv"
         ratios_file = next(folder_path.absolute().glob("*_ratios.txt"), None)
         spot_files[key] = SpotFiles(
