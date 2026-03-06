@@ -210,7 +210,7 @@ def roi_filter_comprehensive(
         'filtered_ids': all_filtered_ids,
         'soma_filter_ids': non_soma_ids,
         'edge_filter_ids': edge_roi_ids,
-        'overlap_filter_ids': overlap_roi_ids,
+        #'overlap_filter_ids': overlap_roi_ids,
         'volume_filtered_ids': volume_filtered_ids,
         'soma_classifier_df': soma_classifier_df,
         'edge_classifier_df': edge_classified_df,
