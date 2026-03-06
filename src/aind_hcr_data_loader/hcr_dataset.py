@@ -121,7 +121,6 @@ class SpotFiles:
     mixed_spots: Path
     spot_unmixing_stats: Path
     ratios_file: Path = None  # Optional, for ratios if available
-    processing_manifest: Path = None  # Optional, for processing manifest if available
 
 
 @dataclass
@@ -1831,14 +1830,14 @@ def get_cell_info_r1(spot_files, round_key="R1"):
     return df_cells
 
 
-def create_channel_gene_table(spot_files: dict, spots_only=True) -> pd.DataFrame:
+def create_channel_gene_table(processing_manifests: dict, spots_only=True) -> pd.DataFrame:
     """
     Create a table of Channel, Gene, and Round from the "gene_dict" key in the processing manifest for each round.
 
     Parameters:
     -----------
-    spot_files : dict
-        Dictionary mapping round keys to SpotFiles objects.
+    processing_manifests : dict
+        Dictionary mapping round keys to processing manifest dicts (from HCRRound.processing_manifest).
 
     Returns:
     --------
@@ -1847,9 +1846,8 @@ def create_channel_gene_table(spot_files: dict, spots_only=True) -> pd.DataFrame
     """
     data = []
 
-    for round_key, spot_file in spot_files.items():
-        if spot_file.processing_manifest:
-            manifest = load_processing_manifest(spot_file.processing_manifest)
+    for round_key, manifest in processing_manifests.items():
+        if manifest:
             gene_dict = manifest.get("gene_dict", {})
 
             for channel, details in gene_dict.items():
@@ -1917,7 +1915,15 @@ def create_channel_gene_table_from_manifests(
             if entry["Gene"] in [d["Gene"] for d in data if d["Round"] != entry["Round"]]:
                 entry["Gene"] += f"-{entry['Round']}"
 
-    return pd.DataFrame(data)
+    df = pd.DataFrame(data)
+
+    # Convenience label combining Round, Channel, and Gene: e.g. "R2_ch647_Gad2"
+    if not df.empty:
+        df["round_channel_gene"] = (
+            df["Round"] + "-" + df["Channel"].astype(str) + "-" + df["Gene"]
+        )
+
+    return df
 
 
 # ------------------------------------------------------------------------------------------------
@@ -2171,10 +2177,6 @@ def get_spot_files(round_dict: dict, data_dir: Path):
             ratios_file=ratios_file,
         )
 
-        processing_manifest = data_dir / folder / "derived" / "processing_manifest.json"
-        if processing_manifest.exists():
-            spot_files[key].processing_manifest = processing_manifest
-
     # # Check if all required files exist
     # for key, files in spot_files.items():
     #     if not all(file.exists() for file in files.__dict__.values()):
@@ -2339,17 +2341,23 @@ def get_processing_manifests(round_dict: dict, data_dir: Path):
 
     Raises:
     -------
-    AssertionError
-        If any processing manifest is not found
+    FileNotFoundError
+        If no processing manifest is found in either expected location.
     """
     processing_manifests = {}
 
     for key, folder in round_dict.items():
-        manifest_path = data_dir / folder / "derived" / "processing_manifest.json"
+        derived_path = data_dir / folder / "derived" / "processing_manifest.json"
+        root_path = data_dir / folder / "processing_manifest.json"
 
-        if not manifest_path.exists():
-            raise FileNotFoundError(f"Processing manifest not found at {manifest_path}")
-
-        processing_manifests[key] = load_processing_manifest(manifest_path)
+        if derived_path.exists():
+            processing_manifests[key] = load_processing_manifest(derived_path)
+        elif root_path.exists():
+            processing_manifests[key] = load_processing_manifest(root_path)
+        else:
+            raise FileNotFoundError(
+                f"Processing manifest not found for round '{key}'. "
+                f"Checked:\n  {derived_path}\n  {root_path}"
+            )
 
     return processing_manifests
