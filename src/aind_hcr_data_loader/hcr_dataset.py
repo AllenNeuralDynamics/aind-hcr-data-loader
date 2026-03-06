@@ -121,7 +121,6 @@ class SpotFiles:
     mixed_spots: Path
     spot_unmixing_stats: Path
     ratios_file: Path = None  # Optional, for ratios if available
-    processing_manifest: Path = None  # Optional, for processing manifest if available
 
 
 @dataclass
@@ -1831,14 +1830,14 @@ def get_cell_info_r1(spot_files, round_key="R1"):
     return df_cells
 
 
-def create_channel_gene_table(spot_files: dict, spots_only=True) -> pd.DataFrame:
+def create_channel_gene_table(processing_manifests: dict, spots_only=True) -> pd.DataFrame:
     """
     Create a table of Channel, Gene, and Round from the "gene_dict" key in the processing manifest for each round.
 
     Parameters:
     -----------
-    spot_files : dict
-        Dictionary mapping round keys to SpotFiles objects.
+    processing_manifests : dict
+        Dictionary mapping round keys to processing manifest dicts (from HCRRound.processing_manifest).
 
     Returns:
     --------
@@ -1847,9 +1846,8 @@ def create_channel_gene_table(spot_files: dict, spots_only=True) -> pd.DataFrame
     """
     data = []
 
-    for round_key, spot_file in spot_files.items():
-        if spot_file.processing_manifest:
-            manifest = load_processing_manifest(spot_file.processing_manifest)
+    for round_key, manifest in processing_manifests.items():
+        if manifest:
             gene_dict = manifest.get("gene_dict", {})
 
             for channel, details in gene_dict.items():
@@ -2178,10 +2176,6 @@ def get_spot_files(round_dict: dict, data_dir: Path):
             spot_unmixing_stats=stats,
             ratios_file=ratios_file,
         )
-
-        processing_manifest = data_dir / folder / "derived" / "processing_manifest.json"
-        if processing_manifest.exists():
-            spot_files[key].processing_manifest = processing_manifest
 
     # # Check if all required files exist
     # for key, files in spot_files.items():
