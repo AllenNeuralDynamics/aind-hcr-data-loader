@@ -1986,9 +1986,40 @@ def create_channel_gene_table_from_manifests(
 
     for round_key, manifest in processing_manifests.items():
         gene_dict = manifest.get("gene_dict", {})
+        
+        ### Hack for cases where genes arent correct in metadata - must enter here manually for the affected round
+        if 'gene_0' in [row['gene'] for row in list(gene_dict.values())]: 
+            print('gene names missing for', round_key, 'using hard coded values in create_channel_gene_table_from_manifests')
+            gene_dict = {"488": {
+                "gene": "Tac1",
+                "barcode": "",
+                "fluorophore": "",
+                "wavelength": "488"},
+            "514": {
+                "gene": "Crh",
+                "barcode": "",
+                "fluorophore": "",
+                "wavelength": "514"},
+            "561": {
+                "gene": "Calb1",
+                "barcode": "",
+                "fluorophore": "",
+                "wavelength": "561"},
+            "594": {
+                "gene": "Calb2",
+                "barcode": "",
+                "fluorophore": "",
+                "wavelength": "594"},
+            "638": {
+                "gene": "Npy",
+                "barcode": "",
+                "fluorophore": "",
+                "wavelength": "638"}
+            }
 
         for channel, details in gene_dict.items():
             data.append({"round": round_key, "channel": channel, "gene": details.get("gene", ""), "rd_ch_gene": round_key+'-'+channel+'-'+details.get("gene", "")})
+
 
     # Sort by round then channel
     data.sort(key=lambda x: (x["round"], x["channel"]))
@@ -2007,16 +2038,7 @@ def create_channel_gene_table_from_manifests(
             if entry["gene"] in [d["gene"] for d in data if d["round"] != entry["round"]]:
                 entry["gene"] += f"-{entry['round']}"
 
-    df = pd.DataFrame(data)
-
-    # Convenience label combining Round, Channel, and Gene: e.g. "R2_ch647_Gad2"
-    if not df.empty:
-        df["round_channel_gene"] = (
-            df["Round"] + "-" + df["Channel"].astype(str) + "-" + df["Gene"]
-        )
-
-    return df
-
+    return pd.DataFrame(data)
 
 # ------------------------------------------------------------------------------------------------
 # File retrieval functions
