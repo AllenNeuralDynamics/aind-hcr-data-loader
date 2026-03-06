@@ -158,21 +158,23 @@ def roi_filter_comprehensive(
     if verbose:
         print(f"      Core ROIs: {len(core_roi_ids):,}")
         print(f"      Edge ROIs: {len(edge_roi_ids):,} (to filter)")
+    # ROI OVERLAP
+    # # -------------------------------------------------------------------------
+    # # 5. Tile boundary overlap filter
+    # # -------------------------------------------------------------------------
+    # if verbose:
+    #     print(f"\n[5/5] Running tile boundary overlap filter...")
     
-    # -------------------------------------------------------------------------
-    # 5. Tile boundary overlap filter
-    # -------------------------------------------------------------------------
+    # # This method upscales coordinates to pyramid level 0
+    # metrics_upscaled_df, overlap_roi_ids = filter_tile_boundary_rois(
+    #     ds, round_key, overlap_threshold=overlap_threshold, metrics_base_path=ds.metrics_base_path
+    # )
+    
+    # if verbose:
+    #     print(f"      ROIs in tile overlaps: {len(overlap_roi_ids):,} (to filter)")
+    # ROI OVERLAP
     if verbose:
-        print(f"\n[5/5] Running tile boundary overlap filter...")
-    
-    # This method upscales coordinates to pyramid level 0
-    metrics_upscaled_df, overlap_roi_ids = filter_tile_boundary_rois(
-        ds, round_key, overlap_threshold=overlap_threshold, metrics_base_path=ds.metrics_base_path
-    )
-    
-    if verbose:
-        print(f"      ROIs in tile overlaps: {len(overlap_roi_ids):,} (to filter)")
-    
+        print(f"\n[5/5] SKIPPING OVERLAP FILTER...")
     # -------------------------------------------------------------------------
     # 6. Combine all filters
     # -------------------------------------------------------------------------
@@ -185,7 +187,7 @@ def roi_filter_comprehensive(
     all_filtered_ids = np.unique(np.concatenate([
         non_soma_ids,
         edge_roi_ids,
-        overlap_roi_ids
+        #overlap_roi_ids # ROI OVERLAP
     ]))
     
     n_filtered = len(all_filtered_ids)
@@ -195,7 +197,7 @@ def roi_filter_comprehensive(
         print(f"\nFilter breakdown:")
         print(f"  Non-soma:        {len(non_soma_ids):>8,}")
         print(f"  Edge ROIs:       {len(edge_roi_ids):>8,}")
-        print(f"  Tile overlaps:   {len(overlap_roi_ids):>8,}")
+        #print(f"  Tile overlaps:   {len(overlap_roi_ids):>8,}") # ROI OVERLAP
         print(f"  " + "-"*30)
         print(f"  Total unique:    {n_filtered:>8,} (filtered out)")
         print(f"  Kept:            {n_kept:>8,} ({100*n_kept/n_total:.1f}%)")
@@ -212,7 +214,7 @@ def roi_filter_comprehensive(
         'volume_filtered_ids': volume_filtered_ids,
         'soma_classifier_df': soma_classifier_df,
         'edge_classifier_df': edge_classified_df,
-        'metrics_df': metrics_upscaled_df,
+        #'metrics_df': metrics_upscaled_df, # ROI OVERLAP
         'n_total': n_total,
         'n_filtered': n_filtered,
         'n_kept': n_kept,
