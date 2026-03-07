@@ -2284,9 +2284,10 @@ def get_spot_files(round_dict: dict, data_dir: Path):
         # so we need to get the one for that specific round using explicit naming 
         if key == 'R1':
             mixed_spots = next(folder_path.absolute().glob("mixed_spots_*.pkl"), None)
+            unmixed_spots = next(folder_path.absolute().glob("unmixed_spots_*.pkl"), None)
         else: 
             mixed_spots = next(folder_path.absolute().glob("mixed_spots_"+key+".pkl"), None)
-        unmixed_spots = next(folder_path.absolute().glob("unmixed_spots_*.pkl"), None)
+            unmixed_spots = next(folder_path.absolute().glob("unmixed_spots_"+key+".pkl"), None)
         # Note that this "fix" will fail if the naming scheme for spot files changes again
         stats = folder_path / "spot_unmixing_stats.csv"
         ratios_file = next(folder_path.absolute().glob("*_ratios.txt"), None)
