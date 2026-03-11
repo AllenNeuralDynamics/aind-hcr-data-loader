@@ -2163,9 +2163,12 @@ def get_spot_files(round_dict: dict, data_dir: Path):
         folder_path = data_dir / folder / "image_spot_spectral_unmixing"
         unmixed_cxg = folder_path / "unmixed_cell_by_gene.csv"
         mixed_cxg = folder_path / "mixed_cell_by_gene.csv"
-        # Expect only one file for each pattern
-        unmixed_spots = next(folder_path.absolute().glob("unmixed_spots_*.pkl"), None)
-        mixed_spots = next(folder_path.absolute().glob("mixed_spots_*.pkl"), None)
+        # Use the round number from the key (e.g. 'R2' -> '2') to avoid accidentally
+        # picking up artefact files with a different round number (e.g. R-1) when
+        # multiple pkl files are present in the same directory.
+        round_num = key[1:]  # 'R2' -> '2'
+        unmixed_spots = next(folder_path.absolute().glob(f"unmixed_spots_R{round_num}*.pkl"), None)
+        mixed_spots = next(folder_path.absolute().glob(f"mixed_spots_R{round_num}.pkl"), None)
         stats = folder_path / "spot_unmixing_stats.csv"
         ratios_file = next(folder_path.absolute().glob("*_ratios.txt"), None)
         spot_files[key] = SpotFiles(
