@@ -796,6 +796,7 @@ class HCRDataset:
         metadata: dict = None,
         dataset_names=None,
         metrics_base_path: str = None,
+        cell_typing_files=None,
     ):
         """
         Initialize HCRDataset.
@@ -813,11 +814,18 @@ class HCRDataset:
         metrics_base_path : str, optional
             Base path to shape metrics directory for comprehensive ROI filtering.
             If None, comprehensive filtering will not be available.
+        cell_typing_files : CellTypingFiles, optional
+            Paths to cell-typing pipeline outputs (basic_results.csv and
+            mapped_cellxgene.h5ad).  When None the cell-typing methods will
+            raise a descriptive error.  Attach after construction or pass via
+            create_hcr_dataset_from_config() when the config contains a
+            ``"cell_typing"`` key.
         """
         self.mouse_id = mouse_id
         self.metadata = metadata or {}
         self.dataset_names = dataset_names
         self.metrics_base_path = metrics_base_path
+        self.cell_typing_files = cell_typing_files
 
         # Initialize rounds
         self.rounds = rounds or {}
@@ -1440,6 +1448,168 @@ class HCRDataset:
 
         return self.rounds[round_key].load_cell_centroids()
 
+    # ------------------------------------------------------------------
+    # Cell-typing methods
+    # ------------------------------------------------------------------
+
+    def load_taxonomy_cell_types(self) -> "pd.DataFrame":
+        """
+        Load the taxonomy cell-type assignments from the cell-typing asset.
+
+        Reads ``basic_results.csv``, skipping the 4 comment lines at the top
+        of the file.  Returns a DataFrame indexed by ``cell_id`` with columns
+        for class, subclass, supertype, and cluster labels / names /
+        bootstrapping probabilities.
+
+        Returns
+        -------
+        pd.DataFrame
+
+        Raises
+        ------
+        ValueError
+            If no ``cell_typing_files`` have been attached to this dataset.
+        FileNotFoundError
+            If the ``basic_results.csv`` file does not exist on disk.
+
+        Examples
+        --------
+        >>> df = dataset.load_taxonomy_cell_types()
+        >>> df.head()
+        """
+        if self.cell_typing_files is None:
+            raise ValueError(
+                "No cell_typing_files attached to this dataset. "
+                "Either pass cell_typing_files= when constructing HCRDataset, "
+                "set dataset.cell_typing_files = create_cell_typing_files(...), "
+                "or add a 'cell_typing' key to the mouse config and reload via "
+                "create_hcr_dataset_from_config()."
+            )
+        from aind_hcr_data_loader.cell_typing_dataset import load_taxonomy_cell_types
+        return load_taxonomy_cell_types(self.cell_typing_files)
+
+    def load_taxonomy_cell_types_h5ad(self) -> "Path":
+        """
+        Return the path to ``mapped_cellxgene.h5ad`` from the cell-typing asset.
+
+        The caller is responsible for loading the file, e.g.::
+
+            path = dataset.load_taxonomy_cell_types_h5ad()
+            import anndata
+            adata = anndata.read_h5ad(path)
+
+        Returns
+        -------
+        pathlib.Path
+
+        Raises
+        ------
+        ValueError
+            If no ``cell_typing_files`` have been attached to this dataset.
+        FileNotFoundError
+            If the ``mapped_cellxgene.h5ad`` file does not exist on disk.
+        """
+        if self.cell_typing_files is None:
+            raise ValueError(
+                "No cell_typing_files attached to this dataset. "
+                "Either pass cell_typing_files= when constructing HCRDataset, "
+                "set dataset.cell_typing_files = create_cell_typing_files(...), "
+                "or add a 'cell_typing' key to the mouse config and reload via "
+                "create_hcr_dataset_from_config()."
+            )
+        from aind_hcr_data_loader.cell_typing_dataset import load_taxonomy_cell_types_h5ad
+        return load_taxonomy_cell_types_h5ad(self.cell_typing_files)
+
+    def annotate_with_cell_types(
+        self,
+        df: "pd.DataFrame",
+        cell_id_col: str = "cell_id",
+        cols: Optional[List[str]] = None,
+        how: str = "left",
+    ) -> "pd.DataFrame":
+        """
+        Annotate a DataFrame with taxonomy cell-type labels from the
+        cell-typing asset.
+
+        Performs a join on ``cell_id`` between ``df`` and the taxonomy table
+        (``basic_results.csv``), adding the requested label columns to the
+        result.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Any DataFrame that contains a cell-ID column.  The column may be
+            named anything — pass its name via ``cell_id_col``.
+        cell_id_col : str, default ``"cell_id"``
+            Name of the cell-ID column in ``df``.
+        cols : list of str, optional
+            Taxonomy columns to attach.  Defaults to the four human-readable
+            label columns::
+
+                ["class_name", "subclass_name", "supertype_name", "cluster_name"]
+
+        how : str, default ``"left"``
+            Join type passed to ``pd.merge`` (``"left"``, ``"inner"``, etc.).
+            A left join keeps all rows in ``df`` and fills unmatched cells with
+            ``NaN``.
+
+        Returns
+        -------
+        pd.DataFrame
+            A copy of ``df`` with the requested taxonomy columns appended.
+            Rows are in the same order as the input.
+
+        Raises
+        ------
+        ValueError
+            If no ``cell_typing_files`` are attached, or if ``cell_id_col``
+            is not present in ``df``.
+
+        Examples
+        --------
+        >>> spots_annotated = dataset.annotate_with_cell_types(spots_df)
+        >>> cxg_annotated   = dataset.annotate_with_cell_types(
+        ...     cxg_df,
+        ...     cols=["class_name", "subclass_name"],
+        ... )
+        """
+        if self.cell_typing_files is None:
+            raise ValueError(
+                "No cell_typing_files attached to this dataset. "
+                "Set dataset.cell_typing_files = create_cell_typing_files(...) "
+                "or add a 'cell_typing' key to the mouse config."
+            )
+        if cell_id_col not in df.columns:
+            raise ValueError(
+                f"Column '{cell_id_col}' not found in the provided DataFrame. "
+                f"Available columns: {list(df.columns)}"
+            )
+
+        if cols is None:
+            cols = ["class_name", "subclass_name", "supertype_name", "cluster_name"]
+
+        # Load taxonomy table (cell_id is the index)
+        taxonomy = self.load_taxonomy_cell_types()[cols]
+
+        # Drop any annotation cols already present in df to avoid _x/_y conflicts
+        existing = [c for c in cols if c in df.columns]
+        if existing:
+            df = df.drop(columns=existing)
+
+        annotated = df.merge(
+            taxonomy.reset_index(),   # brings cell_id back as a column
+            left_on=cell_id_col,
+            right_on="cell_id",
+            how=how,
+        )
+
+        # If cell_id_col was not already named "cell_id" a duplicate column
+        # would appear — drop it.
+        if cell_id_col != "cell_id" and "cell_id" in annotated.columns:
+            annotated = annotated.drop(columns=["cell_id"])
+
+        return annotated
+
     def _print_basic_info(self):
         """Print basic dataset information."""
         print("HCR Dataset Summary")
@@ -1450,6 +1620,11 @@ class HCRDataset:
         print("\nChannels by round:")
         for round_key, channels in self.get_channels().items():
             print(f"  {round_key}: {', '.join(channels)}")
+        # Cell-typing asset
+        if self.cell_typing_files is not None:
+            print(f"\nCell-typing: ✓  ({self.cell_typing_files})")
+        else:
+            print("\nCell-typing: ✗  (not attached)")
 
     def _print_segmentation_info(self):
         """Print segmentation file information."""
@@ -1568,7 +1743,7 @@ class HCRDataset:
         Excludes dunder methods and separates attributes from methods.
         """
         # Public attributes specific to HCRDataset
-        dataset_attrs = ["rounds", "mouse_id", "metadata", "dataset_names"]
+        dataset_attrs = ["rounds", "mouse_id", "metadata", "dataset_names", "cell_typing_files"]
 
         # Public methods specific to HCRDataset
         dataset_methods = [
@@ -1588,6 +1763,9 @@ class HCRDataset:
             "get_segmentation_resolutions",
             "load_segmentation_mask",
             "load_cell_centroids",
+            "load_taxonomy_cell_types",
+            "load_taxonomy_cell_types_h5ad",
+            "annotate_with_cell_types",
             "summary",
         ]
 
@@ -1598,10 +1776,12 @@ class HCRDataset:
         """Return a string representation of the HCRDataset object."""
         rounds_list = list(self.rounds.keys())
         total_channels = sum(len(round_obj.get_channels()) for round_obj in self.rounds.values())
+        ct_status = "✓" if self.cell_typing_files is not None else "✗"
         return (
             f"HCRDataset(mouse_id='{self.mouse_id}', "
             f"rounds={rounds_list}, "
-            f"total_channels={total_channels})"
+            f"total_channels={total_channels}, "
+            f"cell_typing={ct_status})"
         )
 
 
@@ -1774,7 +1954,10 @@ def create_hcr_dataset_from_config(
     Returns:
     --------
     HCRDataset
-        Complete dataset object
+        Complete dataset object.  If the mouse config contains a
+        ``"cell_typing"`` key (e.g. ``{"asset": "HCR_782149_cell-typing_…"}``),
+        the cell-typing asset is automatically discovered and attached as
+        ``dataset.cell_typing_files``.
     """
     config = load_mouse_config(config_path=config_path, mouse_id=mouse_id)
     round_dict = config["rounds"]
@@ -1782,13 +1965,32 @@ def create_hcr_dataset_from_config(
     if data_dir is None:
         data_dir = Path(config.get("data_dir", "../data"))
 
-    return create_hcr_dataset(
+    dataset = create_hcr_dataset(
         round_dict, 
         data_dir, 
         mouse_id,
         config_path=config_path,
         metrics_base_path=metrics_base_path
     )
+
+    # Attach cell-typing asset if configured
+    cell_typing_config = config.get("cell_typing")
+    if cell_typing_config:
+        from aind_hcr_data_loader.cell_typing_dataset import create_cell_typing_files
+        asset_name = cell_typing_config.get("asset")
+        if asset_name:
+            cell_typing_asset_path = data_dir / asset_name
+            pairwise_asset_name = cell_typing_config.get("pairwise_asset_name")
+            try:
+                dataset.cell_typing_files = create_cell_typing_files(
+                    cell_typing_asset_path,
+                    pairwise_asset_name=pairwise_asset_name,
+                )
+                print(f"Cell-typing asset attached: {dataset.cell_typing_files}")
+            except FileNotFoundError as e:
+                print(f"Warning: Could not attach cell-typing asset: {e}")
+
+    return dataset
 
 
 def load_mouse_config(mouse_id: str, config_path: Path = None) -> dict:
