@@ -113,6 +113,12 @@ class SpotFiles:
     """
     Data class to hold paths to spot files for unmixed and mixed cell by gene data,
     unmixed and mixed spots, and spot unmixing statistics.
+
+    The ``*_cxg_filtered`` fields are first-class products produced by the
+    pairwise-unmixing pipeline.  They contain the same rows as ``*_cxg`` but
+    with an extra ``round_chan_gene`` column (e.g. ``R1-488-GFP``) and have
+    already had basic quality filters applied.  They are ``None`` for standard
+    processed assets that do not produce filtered tables.
     """
 
     unmixed_cxg: Path
@@ -120,7 +126,9 @@ class SpotFiles:
     unmixed_spots: Path
     mixed_spots: Path
     spot_unmixing_stats: Path
-    ratios_file: Path = None  # Optional, for ratios if available
+    ratios_file: Path = None          # Optional, for ratios if available
+    unmixed_cxg_filtered: Path = None  # Pairwise-unmixing filtered CxG (unmixed)
+    mixed_cxg_filtered: Path = None    # Pairwise-unmixing filtered CxG (mixed)
 
 
 @dataclass
@@ -591,12 +599,17 @@ class HCRRound:
             spots_data = spots_data[spots_data["cell_id"].isin(filter_cell_ids)].reset_index(drop=True)
             print(f"Filtered spots to {len(spots_data)} entries based on provided cell IDs")
 
-        # make explicit index columns
-        spots_data = spots_data.drop(columns=["spot_id"])
-        spots_data = spots_data.reset_index(drop=False).rename(columns={'index': 'spot_uid_int'})
+        # make explicit index columns — skip creation if already present
+        # (pairwise-unmixing pickles ship with these columns pre-built)
+        spots_data = spots_data.drop(columns=["spot_id"], errors="ignore")
+        spots_data = spots_data.reset_index(drop=True)
 
-        spots_data['spot_uid'] = (spots_data['chan'].astype(str) + '_' + 
-                                spots_data['chan_spot_id'].astype(str))
+        if 'spot_uid_int' not in spots_data.columns:
+            spots_data.insert(0, 'spot_uid_int', spots_data.index)
+
+        if 'spot_uid' not in spots_data.columns:
+            spots_data['spot_uid'] = (spots_data['chan'].astype(str) + '_' +
+                                      spots_data['chan_spot_id'].astype(str))
         # Convert to category for memory efficiency
         spots_data['spot_uid'] = spots_data['spot_uid'].astype('category')
         cols = list(spots_data.columns)
