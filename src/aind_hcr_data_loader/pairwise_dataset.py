@@ -12,8 +12,8 @@ different directory layout from the standard ``_processed_`` assets:
             unmixed_spots_R1_minDist_1.pkl
             mixed_cell_by_gene.csv
             unmixed_cell_by_gene.csv
-            mixed_cell_by_gene_filtered.csv       <- first-class product
-            unmixed_cell_by_gene_filtered.csv     <- first-class product
+            mixed_cell_by_gene_filtered.csv       
+            unmixed_cell_by_gene_filtered.csv     
             R1_ratios_matrix.csv
             R1_reassignment_matrix.csv
             R1_reassignment_matrix_norm_rows.csv
