@@ -6,6 +6,9 @@ dataset = create_hcr_dataset(round_dict, data_dir, mouse_id="747667")
 # Or create directly from config
 dataset = create_hcr_dataset_from_config("747667")
 
+# Or create from a catalog schema record (ophys-mfish-dataset-catalog)
+dataset = create_hcr_dataset_from_schema("path/to/mice/782149.json", data_dir)
+
 # Overview
 dataset.summary()
 
@@ -1989,6 +1992,93 @@ def create_hcr_dataset_from_config(
                 print(f"Cell-typing asset attached: {dataset.cell_typing_files}")
             except FileNotFoundError as e:
                 print(f"Warning: Could not attach cell-typing asset: {e}")
+
+    return dataset
+
+
+def create_hcr_dataset_from_schema(
+    schema_path: Path,
+    data_dir: Path,
+    metrics_base_path: str = None,
+) -> HCRDataset:
+    """
+    Create an HCRDataset from an ophys-mfish-dataset-catalog schema record.
+
+    This is the catalog-native alternative to ``create_hcr_dataset_from_config``.
+    It reads a ``mice/<mouse_id>.json`` file that follows the catalog schema
+    (v1.0.0) and maps its fields onto the usual dataset construction path:
+
+    * ``rounds``              → round_dict passed to ``create_hcr_dataset``
+    * ``derived_assets.roi_shape_metrics`` → ``metrics_base_path`` (resolved
+      under *data_dir*), unless an explicit override is supplied
+    * ``derived_assets.cell_typing``       → ``dataset.cell_typing_files``
+    * ``mouse_metadata`` + ``notes``       → ``dataset.metadata``
+
+    Parameters
+    ----------
+    schema_path : Path
+        Path to the catalog JSON record, e.g. ``mice/782149.json``.
+    data_dir : Path
+        Root directory that contains the round asset folders and any derived
+        asset folders (roi_shape_metrics, cell_typing, …).
+    metrics_base_path : str, optional
+        Explicit override for the ROI shape-metrics directory.  When *None*
+        the value is auto-resolved from ``derived_assets.roi_shape_metrics``
+        in the schema.  Pass a string to override.
+
+    Returns
+    -------
+    HCRDataset
+        Fully constructed dataset with all available derived assets attached.
+
+    Examples
+    --------
+    >>> dataset = create_hcr_dataset_from_schema(
+    ...     "path/to/mice/782149.json",
+    ...     data_dir=Path("/data"),
+    ... )
+    >>> dataset.summary()
+    """
+    schema_path = Path(schema_path)
+    data_dir = Path(data_dir)
+
+    with open(schema_path, "r") as f:
+        schema = json.load(f)
+
+    mouse_id = schema["mouse_id"]
+    round_dict = schema["rounds"]
+    derived_assets = schema.get("derived_assets", {})
+
+    # Resolve metrics_base_path from schema unless caller supplied an override
+    if metrics_base_path is None:
+        roi_asset = derived_assets.get("roi_shape_metrics")
+        if roi_asset:
+            metrics_base_path = str(data_dir / roi_asset)
+
+    dataset = create_hcr_dataset(
+        round_dict,
+        data_dir,
+        mouse_id=mouse_id,
+        metrics_base_path=metrics_base_path,
+    )
+
+    # Attach cell-typing asset if present in derived_assets
+    cell_typing_asset = derived_assets.get("cell_typing")
+    if cell_typing_asset:
+        from aind_hcr_data_loader.cell_typing_dataset import create_cell_typing_files
+        cell_typing_asset_path = data_dir / cell_typing_asset
+        try:
+            dataset.cell_typing_files = create_cell_typing_files(cell_typing_asset_path)
+            print(f"Cell-typing asset attached: {dataset.cell_typing_files}")
+        except FileNotFoundError as e:
+            print(f"Warning: Could not attach cell-typing asset: {e}")
+
+    # Store mouse_metadata and notes in dataset.metadata
+    mouse_metadata = schema.get("mouse_metadata", {})
+    notes = schema.get("notes", [])
+    dataset.metadata.update(mouse_metadata)
+    if notes:
+        dataset.metadata["notes"] = notes
 
     return dataset
 
