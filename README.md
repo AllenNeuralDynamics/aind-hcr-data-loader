@@ -9,6 +9,34 @@
 
 ## Change log
 
+**v0.6.0 (03/18/2026)**
+
+*New modules*
++ Added `pairwise_dataset.py` —  `create_pairwise_unmixing_dataset()` for loading pairwise-unmixing pipeline outputs
++ Added `cell_typing_dataset.py` —  for attaching and querying cell-typing assets
++ Added `spot_filters.py` — spot-level filtering by channel-intensity percentiles, spatial isolation (kdtree), and spectral purity
+
+*`hcr_dataset.py`*
++ Added `create_hcr_dataset_from_schema()` to construct an `HCRDataset` directly from an `ophys-mfish-dataset-catalog` JSON record (`mice/<mouse_id>.json`)
++ `create_hcr_dataset_from_config()` now auto-attaches cell-typing assets when a `"cell_typing"` key is present in the mouse config and accepts a new `metrics_base_path` parameter
++ `HCRRound` gains a `parent_dataset` reference (set automatically by `create_hcr_dataset`) enabling advanced filtering from round-level calls
++ `HCRRound.load_spots()` gains an `roi_filter_type` parameter (`'volume'` or `'comprehensive'`) as a cleaner alternative to passing raw `filter_cell_ids`
++ `HCRDataset` gains new methods: `get_filtered_cell_ids()`, `create_cell_gene_matrix_from_spots()`, `load_taxonomy_cell_types()`, `load_taxonomy_cell_types_h5ad()`, and `annotate_with_cell_types()`
++ `SpotFiles` replaces the `processing_manifest` field with `unmixed_cxg_filtered` and `mixed_cxg_filtered` for pairwise-unmixing filtered CxG tables
++ `get_spot_files()` now resolves pkl files using the round number from the key (e.g. `R2` → `mixed_spots_R2*.pkl`) to avoid accidentally picking up artefact files (e.g. `R-1`)
++ `get_processing_manifests()` now checks both `derived/processing_manifest.json` and the round root; raises `FileNotFoundError` with a clear message instead of an `AssertionError`
++ `create_channel_gene_table_from_manifests()` now adds a `round_channel_gene` convenience column (e.g. `"R2-488-GFP"`)
++ `create_channel_gene_table()` parameter renamed from `spot_files` → `processing_manifests` to reflect that it now takes manifest dicts directly
+
+*`filters.py`*
++ `roi_filter_soma_and_overlap()` renamed to `roi_filter_comprehensive()` with an updated signature that no longer requires `HCRDataset` as a positional arg
++ `filter_tile_boundary_rois()` signature updated for consistency
++ Added `filter_cell_info()` — volume-quantile filter (default q1=0.2, q2=0.95) on a cell-info DataFrame
++ Added `get_inhibitory_mask()` — returns a boolean mask for inhibitory cells based on per-gene thresholds
+
+*Dependencies*
++ Added `pyarrow` as a core dependency
+
 **v0.5.1 02/23/2026**
 + Added metrics_base_path parameter to HCRDataset for soma shape classifier
 + Added new spot_filters.py module with vectorized percentile filtering and spot quality assessment functions

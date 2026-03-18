@@ -21,6 +21,7 @@ dependencies = [
     "numpy",
     "dask[array]",
     "zarr",
+    "pyarrow"
 ]
 
 [project.optional-dependencies]
