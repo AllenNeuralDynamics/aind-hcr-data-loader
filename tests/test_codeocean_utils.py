@@ -10,10 +10,13 @@ from aind_hcr_data_loader.codeocean_utils import (
     AttachResult,
     MouseRecord,
     _find_data_asset_by_name,
+    attach_mouse_record,
     attach_mouse_record_to_capsule,
     attach_mouse_record_to_pipeline,
+    attach_mouse_record_to_workstation,
     create_client_from_env,
     get_capsule_id_from_env,
+    get_computation_id_from_env,
 )
 
 
@@ -82,6 +85,11 @@ def _make_client(assets_by_name: dict) -> MagicMock:
 
     client.pipelines.attach_data_assets.side_effect = _attach_pipeline
 
+    def _attach_workstation(computation_id, attach_params):
+        return [_make_mock_attach_result(p.id) for p in attach_params]
+
+    client.computations.attach_data_assets.side_effect = _attach_workstation
+
     return client
 
 
@@ -98,10 +106,10 @@ class TestCreateClientFromEnv(unittest.TestCase):
 
     def test_raises_when_token_missing(self):
         with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("API_TOKEN", None)
+            os.environ.pop("API_SECRET", None)
             with self.assertRaises(EnvironmentError) as ctx:
                 create_client_from_env()
-        self.assertIn("API_TOKEN", str(ctx.exception))
+        self.assertIn("API_SECRET", str(ctx.exception))
 
     def test_custom_token_env_var_name(self):
         with patch.dict(os.environ, {"MY_TOKEN": "tok-456"}):
@@ -137,6 +145,38 @@ class TestGetCapsuleIdFromEnv(unittest.TestCase):
         with patch.dict(os.environ, {"MY_CAPSULE": "caps-uuid-xyz"}):
             self.assertEqual(
                 get_capsule_id_from_env(capsule_id_env="MY_CAPSULE"), "caps-uuid-xyz"
+            )
+
+
+# ---------------------------------------------------------------------------
+# get_computation_id_from_env tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetComputationIdFromEnv(unittest.TestCase):
+    def test_returns_computation_id_when_set(self):
+        with patch.dict(os.environ, {"CO_COMPUTATION_ID": "comp-uuid-abc"}):
+            self.assertEqual(get_computation_id_from_env(), "comp-uuid-abc")
+
+    def test_raises_when_missing(self):
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("CO_COMPUTATION_ID", None)
+            with self.assertRaises(EnvironmentError) as ctx:
+                get_computation_id_from_env()
+        self.assertIn("CO_COMPUTATION_ID", str(ctx.exception))
+
+    def test_error_message_mentions_workstation(self):
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("CO_COMPUTATION_ID", None)
+            with self.assertRaises(EnvironmentError) as ctx:
+                get_computation_id_from_env()
+        self.assertIn("workstation", str(ctx.exception).lower())
+
+    def test_custom_env_var_name(self):
+        with patch.dict(os.environ, {"MY_COMP": "comp-uuid-xyz"}):
+            self.assertEqual(
+                get_computation_id_from_env(computation_id_env="MY_COMP"),
+                "comp-uuid-xyz",
             )
 
 
@@ -527,6 +567,329 @@ class TestAttachMouseRecordToPipeline(unittest.TestCase):
                 self.record, pipeline_id=self.pipeline_id
             )
             mock_factory.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# attach_mouse_record_to_workstation tests
+# ---------------------------------------------------------------------------
+
+
+class TestAttachMouseRecordToWorkstation(unittest.TestCase):
+    def setUp(self):
+        self.record = MouseRecord.from_dict(SAMPLE_RECORD_DICT)
+        all_names = list(self.record.rounds.values()) + list(
+            self.record.derived_assets.values()
+        )
+        self.assets = {
+            name: _make_mock_asset(f"wid-{i}", name)
+            for i, name in enumerate(all_names)
+        }
+        self.client = _make_client(self.assets)
+        self.computation_id = "computation-uuid-001"
+
+    def test_returns_one_result_per_entry(self):
+        results = attach_mouse_record_to_workstation(
+            self.record, computation_id=self.computation_id, client=self.client
+        )
+        expected = len(self.record.rounds) + len(self.record.derived_assets)
+        self.assertEqual(len(results), expected)
+
+    def test_all_results_succeed(self):
+        results = attach_mouse_record_to_workstation(
+            self.record, computation_id=self.computation_id, client=self.client
+        )
+        for r in results:
+            self.assertTrue(r.success, msg=f"{r.label} failed: {r.error}")
+
+    def test_uses_computations_not_capsules_or_pipelines(self):
+        attach_mouse_record_to_workstation(
+            self.record, computation_id=self.computation_id, client=self.client
+        )
+        self.client.computations.attach_data_assets.assert_called()
+        self.client.capsules.attach_data_assets.assert_not_called()
+        self.client.pipelines.attach_data_assets.assert_not_called()
+
+    def test_attach_called_with_computation_id(self):
+        attach_mouse_record_to_workstation(
+            self.record, computation_id=self.computation_id, client=self.client
+        )
+        for c in self.client.computations.attach_data_assets.call_args_list:
+            self.assertEqual(c.kwargs["computation_id"], self.computation_id)
+
+    def test_attach_called_once_per_asset(self):
+        attach_mouse_record_to_workstation(
+            self.record, computation_id=self.computation_id, client=self.client
+        )
+        expected_calls = len(self.record.rounds) + len(self.record.derived_assets)
+        self.assertEqual(
+            self.client.computations.attach_data_assets.call_count, expected_calls
+        )
+
+    def test_labels_have_correct_prefixes(self):
+        results = attach_mouse_record_to_workstation(
+            self.record, computation_id=self.computation_id, client=self.client
+        )
+        labels = [r.label for r in results]
+        self.assertTrue(any(l.startswith("rounds.") for l in labels))
+        self.assertTrue(any(l.startswith("derived_assets.") for l in labels))
+
+    def test_dry_run_skips_attach(self):
+        results = attach_mouse_record_to_workstation(
+            self.record,
+            computation_id=self.computation_id,
+            client=self.client,
+            dry_run=True,
+        )
+        self.client.computations.attach_data_assets.assert_not_called()
+        for r in results:
+            self.assertIsNotNone(r.data_asset)
+            self.assertIsNone(r.error)
+
+    def test_include_rounds_false(self):
+        results = attach_mouse_record_to_workstation(
+            self.record,
+            computation_id=self.computation_id,
+            client=self.client,
+            include_rounds=False,
+        )
+        self.assertEqual(
+            [r for r in results if r.label.startswith("rounds.")], []
+        )
+        self.assertEqual(
+            len([r for r in results if r.label.startswith("derived_assets.")]),
+            len(self.record.derived_assets),
+        )
+
+    def test_include_derived_false(self):
+        results = attach_mouse_record_to_workstation(
+            self.record,
+            computation_id=self.computation_id,
+            client=self.client,
+            include_derived=False,
+        )
+        self.assertEqual(
+            [r for r in results if r.label.startswith("derived_assets.")], []
+        )
+        self.assertEqual(
+            len([r for r in results if r.label.startswith("rounds.")]),
+            len(self.record.rounds),
+        )
+
+    def test_mount_prefix_applied(self):
+        attach_mouse_record_to_workstation(
+            self.record,
+            computation_id=self.computation_id,
+            client=self.client,
+            mount_prefix="inputs",
+        )
+        for c in self.client.computations.attach_data_assets.call_args_list:
+            params = c.kwargs["attach_params"]
+            for p in params:
+                self.assertTrue(
+                    p.mount.startswith("inputs/"),
+                    msg=f"Expected mount to start with 'inputs/', got '{p.mount}'",
+                )
+
+    def test_missing_asset_does_not_raise(self):
+        missing_name = list(self.record.rounds.values())[0]
+        assets_with_gap = {k: v for k, v in self.assets.items() if k != missing_name}
+        client = _make_client(assets_with_gap)
+        results = attach_mouse_record_to_workstation(
+            self.record, computation_id=self.computation_id, client=client
+        )
+        missing = [r for r in results if r.asset_name == missing_name]
+        self.assertEqual(len(missing), 1)
+        self.assertFalse(missing[0].success)
+        self.assertIn("not found", missing[0].error)
+
+    def test_search_error_recorded_not_raised(self):
+        self.client.data_assets.search_data_assets_iterator.side_effect = RuntimeError(
+            "network error"
+        )
+        results = attach_mouse_record_to_workstation(
+            self.record, computation_id=self.computation_id, client=self.client
+        )
+        for r in results:
+            self.assertFalse(r.success)
+            self.assertIn("Search failed", r.error)
+
+    def test_attach_api_error_recorded_not_raised(self):
+        self.client.computations.attach_data_assets.side_effect = RuntimeError(
+            "API error"
+        )
+        results = attach_mouse_record_to_workstation(
+            self.record, computation_id=self.computation_id, client=self.client
+        )
+        for r in results:
+            self.assertFalse(r.success)
+            self.assertIn("Attach failed", r.error)
+
+    def test_empty_record_returns_empty_list(self):
+        empty_record = MouseRecord(mouse_id="000")
+        results = attach_mouse_record_to_workstation(
+            empty_record, computation_id=self.computation_id, client=self.client
+        )
+        self.assertEqual(results, [])
+
+    def test_auto_client_from_env(self):
+        with patch(
+            "aind_hcr_data_loader.codeocean_utils.create_client_from_env",
+            return_value=self.client,
+        ) as mock_factory:
+            attach_mouse_record_to_workstation(
+                self.record, computation_id=self.computation_id
+            )
+            mock_factory.assert_called_once()
+
+    def test_auto_computation_id_from_env(self):
+        with patch(
+            "aind_hcr_data_loader.codeocean_utils.get_computation_id_from_env",
+            return_value=self.computation_id,
+        ) as mock_comp:
+            attach_mouse_record_to_workstation(self.record, client=self.client)
+            mock_comp.assert_called_once()
+
+    def test_fully_automatic_from_env(self):
+        with patch(
+            "aind_hcr_data_loader.codeocean_utils.create_client_from_env",
+            return_value=self.client,
+        ) as mock_client_factory, patch(
+            "aind_hcr_data_loader.codeocean_utils.get_computation_id_from_env",
+            return_value=self.computation_id,
+        ) as mock_comp_factory:
+            attach_mouse_record_to_workstation(self.record)
+            mock_client_factory.assert_called_once()
+            mock_comp_factory.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# attach_mouse_record dispatcher tests
+# ---------------------------------------------------------------------------
+
+
+class TestAttachMouseRecordDispatcher(unittest.TestCase):
+    def setUp(self):
+        self.record = MouseRecord.from_dict(SAMPLE_RECORD_DICT)
+        all_names = list(self.record.rounds.values()) + list(
+            self.record.derived_assets.values()
+        )
+        self.assets = {
+            name: _make_mock_asset(f"did-{i}", name)
+            for i, name in enumerate(all_names)
+        }
+        self.client = _make_client(self.assets)
+        self.capsule_id = "capsule-uuid-disp"
+        self.computation_id = "computation-uuid-disp"
+        self.pipeline_id = "pipeline-uuid-disp"
+
+    def test_dispatches_to_workstation_when_computation_id_passed(self):
+        with patch(
+            "aind_hcr_data_loader.codeocean_utils.attach_mouse_record_to_workstation",
+            return_value=[],
+        ) as mock_ws:
+            attach_mouse_record(
+                self.record,
+                computation_id=self.computation_id,
+                client=self.client,
+            )
+            mock_ws.assert_called_once()
+            _, kwargs = mock_ws.call_args
+            self.assertEqual(kwargs["computation_id"], self.computation_id)
+
+    def test_dispatches_to_workstation_when_env_var_set(self):
+        with patch.dict(os.environ, {"CO_COMPUTATION_ID": self.computation_id}), patch(
+            "aind_hcr_data_loader.codeocean_utils.attach_mouse_record_to_workstation",
+            return_value=[],
+        ) as mock_ws:
+            attach_mouse_record(self.record, client=self.client)
+            mock_ws.assert_called_once()
+
+    def test_workstation_takes_priority_over_capsule(self):
+        """CO_COMPUTATION_ID beats CO_CAPSULE_ID."""
+        with patch.dict(
+            os.environ,
+            {
+                "CO_COMPUTATION_ID": self.computation_id,
+                "CO_CAPSULE_ID": self.capsule_id,
+            },
+        ), patch(
+            "aind_hcr_data_loader.codeocean_utils.attach_mouse_record_to_workstation",
+            return_value=[],
+        ) as mock_ws, patch(
+            "aind_hcr_data_loader.codeocean_utils.attach_mouse_record_to_capsule",
+            return_value=[],
+        ) as mock_caps:
+            attach_mouse_record(self.record, client=self.client)
+            mock_ws.assert_called_once()
+            mock_caps.assert_not_called()
+
+    def test_dispatches_to_capsule_when_capsule_id_passed(self):
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "aind_hcr_data_loader.codeocean_utils.attach_mouse_record_to_capsule",
+            return_value=[],
+        ) as mock_caps:
+            os.environ.pop("CO_COMPUTATION_ID", None)
+            attach_mouse_record(
+                self.record, capsule_id=self.capsule_id, client=self.client
+            )
+            mock_caps.assert_called_once()
+            _, kwargs = mock_caps.call_args
+            self.assertEqual(kwargs["capsule_id"], self.capsule_id)
+
+    def test_dispatches_to_capsule_when_env_var_set(self):
+        with patch.dict(
+            os.environ, {"CO_CAPSULE_ID": self.capsule_id}, clear=True
+        ), patch(
+            "aind_hcr_data_loader.codeocean_utils.attach_mouse_record_to_capsule",
+            return_value=[],
+        ) as mock_caps:
+            attach_mouse_record(self.record, client=self.client)
+            mock_caps.assert_called_once()
+
+    def test_dispatches_to_pipeline_when_pipeline_id_passed(self):
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "aind_hcr_data_loader.codeocean_utils.attach_mouse_record_to_pipeline",
+            return_value=[],
+        ) as mock_pipe:
+            os.environ.pop("CO_COMPUTATION_ID", None)
+            os.environ.pop("CO_CAPSULE_ID", None)
+            attach_mouse_record(
+                self.record, pipeline_id=self.pipeline_id, client=self.client
+            )
+            mock_pipe.assert_called_once()
+            _, kwargs = mock_pipe.call_args
+            self.assertEqual(kwargs["pipeline_id"], self.pipeline_id)
+
+    def test_raises_when_no_context_available(self):
+        with patch.dict(os.environ, {}, clear=True):
+            for var in ("CO_COMPUTATION_ID", "CO_CAPSULE_ID"):
+                os.environ.pop(var, None)
+            with self.assertRaises(EnvironmentError) as ctx:
+                attach_mouse_record(self.record, client=self.client)
+        msg = str(ctx.exception)
+        self.assertIn("CO_COMPUTATION_ID", msg)
+        self.assertIn("CO_CAPSULE_ID", msg)
+
+    def test_shared_kwargs_forwarded(self):
+        """include_rounds, include_derived, mount_prefix, dry_run are passed through."""
+        with patch(
+            "aind_hcr_data_loader.codeocean_utils.attach_mouse_record_to_workstation",
+            return_value=[],
+        ) as mock_ws:
+            attach_mouse_record(
+                self.record,
+                computation_id=self.computation_id,
+                client=self.client,
+                include_rounds=False,
+                include_derived=False,
+                mount_prefix="pfx",
+                dry_run=True,
+            )
+            _, kwargs = mock_ws.call_args
+            self.assertFalse(kwargs["include_rounds"])
+            self.assertFalse(kwargs["include_derived"])
+            self.assertEqual(kwargs["mount_prefix"], "pfx")
+            self.assertTrue(kwargs["dry_run"])
 
 
 if __name__ == "__main__":
