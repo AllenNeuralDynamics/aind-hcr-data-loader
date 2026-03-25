@@ -586,6 +586,7 @@ class HCRRound:
                 spots_data[col] = spots_data[col].astype('category')
 
         # remove cols with 'fg' or 'bg' substrings, save space
+        print("dEEP:", remove_fg_bg_cols)
         if remove_fg_bg_cols:
             cols_to_remove = [col for col in spots_data.columns if 'fg' in col or 'bg' in col]
             spots_data = spots_data.drop(columns=cols_to_remove)
@@ -1023,7 +1024,8 @@ class HCRDataset:
                 f"filter_type must be 'volume', 'comprehensive', or 'none', got '{filter_type}'"
             )
 
-    def load_all_rounds_spots_mp(self, table_type="mixed_spots", filter_cell_ids=None, roi_filter_type=None):
+    def load_all_rounds_spots_mp(self, table_type="mixed_spots", filter_cell_ids=None, roi_filter_type=None,
+                                   remove_fg_bg_cols=True):
         """
         Load all spots from the dataset in parallel.
 
@@ -1047,14 +1049,14 @@ class HCRDataset:
         
         # Create list of (round_key, round_obj) tuples for multiprocessing
         round_items = list(self.rounds.items())
-
         # Use multiprocessing to load spots from all rounds
         pool = mp.Pool(processes=min(len(self.rounds), mp.cpu_count()))
         process_round = partial(
             _load_spots_for_round, 
             table_type=table_type,
             filter_cell_ids=filter_cell_ids,
-            roi_filter_type=roi_filter_type
+            roi_filter_type=roi_filter_type,
+            remove_fg_bg_cols=remove_fg_bg_cols
         )
         all_spots_list = pool.map(process_round, round_items)
         pool.close()
@@ -1793,7 +1795,7 @@ class HCRDataset:
 # ------------------------------------------------------------------------------------------------
 
 
-def _load_spots_for_round(round_item, table_type="mixed_spots", filter_cell_ids=None, roi_filter_type=None):
+def _load_spots_for_round(round_item, table_type="mixed_spots", filter_cell_ids=None, roi_filter_type=None,remove_fg_bg_cols=True):
     """
     Helper function for multiprocessing to load spots for a single round.
 
@@ -1834,7 +1836,7 @@ def _load_spots_for_round(round_item, table_type="mixed_spots", filter_cell_ids=
         spots_data = round_obj.load_spots(
             table_type=table_type,
             roi_filter_type=roi_filter_type,
-            remove_fg_bg_cols=False  # Don't remove columns here, will be done later if needed
+            remove_fg_bg_cols=remove_fg_bg_cols  # Don't remove columns here, will be done later if needed
         )
         # Note: load_spots already adds the 'round' column
     elif filter_cell_ids is not None:
