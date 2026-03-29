@@ -539,6 +539,8 @@ class PairwiseUnmixingDataset(HCRDataset):
             rounds=rounds,
             mouse_id=mouse_id,
             metadata=metadata,
+            metrics_base_path=getattr(source_dataset, "metrics_base_path", None),
+            cell_typing_files=getattr(source_dataset, "cell_typing_files", None),
         )
         self.pairwise_asset_path = Path(pairwise_asset_path) if pairwise_asset_path else None
         self.aggregated_cxg_unmixed = aggregated_cxg_unmixed
