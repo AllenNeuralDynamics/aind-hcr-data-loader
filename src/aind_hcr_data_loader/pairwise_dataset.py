@@ -955,12 +955,15 @@ def create_pairwise_unmixing_dataset(
 
     # ------------------------------------------------------------------ #
     # 3. Top-level aggregated CxG                                         #
+    # Check legacy root-level filename first, then the newer subdir layout#
     # ------------------------------------------------------------------ #
-    aggregated_cxg_unmixed = _check(
-        pairwise_asset_path / "unmixed_cell_by_gene_all_rounds.csv"
+    aggregated_cxg_unmixed = (
+        _check(pairwise_asset_path / "unmixed_cell_by_gene_all_rounds.csv")
+        or _check(pairwise_asset_path / "all_cells_unmixed" / "unmixed_all_cells.csv")
     )
-    aggregated_cxg_mixed = _check(
-        pairwise_asset_path / "mixed_cell_by_gene_all_rounds.csv"
+    aggregated_cxg_mixed = (
+        _check(pairwise_asset_path / "mixed_cell_by_gene_all_rounds.csv")
+        or _check(pairwise_asset_path / "all_cells_mixed" / "mixed_all_cells.csv")
     )
 
     # ------------------------------------------------------------------ #
