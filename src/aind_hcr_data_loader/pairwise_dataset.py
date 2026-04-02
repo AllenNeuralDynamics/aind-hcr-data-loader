@@ -539,6 +539,8 @@ class PairwiseUnmixingDataset(HCRDataset):
             rounds=rounds,
             mouse_id=mouse_id,
             metadata=metadata,
+            metrics_base_path=getattr(source_dataset, "metrics_base_path", None),
+            cell_typing_files=getattr(source_dataset, "cell_typing_files", None),
         )
         self.pairwise_asset_path = Path(pairwise_asset_path) if pairwise_asset_path else None
         self.aggregated_cxg_unmixed = aggregated_cxg_unmixed
@@ -953,12 +955,15 @@ def create_pairwise_unmixing_dataset(
 
     # ------------------------------------------------------------------ #
     # 3. Top-level aggregated CxG                                         #
+    # Check legacy root-level filename first, then the newer subdir layout#
     # ------------------------------------------------------------------ #
-    aggregated_cxg_unmixed = _check(
-        pairwise_asset_path / "unmixed_cell_by_gene_all_rounds.csv"
+    aggregated_cxg_unmixed = (
+        _check(pairwise_asset_path / "unmixed_cell_by_gene_all_rounds.csv")
+        or _check(pairwise_asset_path / "all_cells_unmixed" / "unmixed_all_cells.csv")
     )
-    aggregated_cxg_mixed = _check(
-        pairwise_asset_path / "mixed_cell_by_gene_all_rounds.csv"
+    aggregated_cxg_mixed = (
+        _check(pairwise_asset_path / "mixed_cell_by_gene_all_rounds.csv")
+        or _check(pairwise_asset_path / "all_cells_mixed" / "mixed_all_cells.csv")
     )
 
     # ------------------------------------------------------------------ #
