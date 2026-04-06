@@ -355,8 +355,9 @@ class HCRRound:
             )
 
         zarr_path = data_dict[channel]
-        # Open zarr array at specified pyramid level
-        zarr_array = zarr.open(zarr_path, mode="r")[pyramid_level]
+        # Open zarr array at specified pyramid level.
+        # zarr v3 group subscript requires a string key, not an int.
+        zarr_array = zarr.open(zarr_path, mode="r")[str(pyramid_level)]
         # Convert to dask array for efficient chunked computation
         dask_array = da.from_array(zarr_array, chunks=zarr_array.chunks)
         return dask_array
@@ -2657,12 +2658,24 @@ def get_processing_manifests(round_dict: dict, data_dir: Path):
     processing_manifests = {}
 
     for key, folder in round_dict.items():
-        derived_path = data_dir / folder / "derived" / "processing_manifest.json"
-        root_path = data_dir / folder / "processing_manifest.json"
+        folder_path = data_dir / folder
+        derived_path = folder_path / "derived" / "processing_manifest.json"
+        root_path = folder_path / "processing_manifest.json"
 
-        if derived_path.exists():
+        # Use a single directory scan rather than two individual stat() calls.
+        # On FUSE-mounted assets, stat()-ing into a non-existent subdirectory
+        # (e.g. "derived/") blocks waiting for the network to return ENOENT.
+        # Scanning the top-level folder with iterdir() (readdir) is fast.
+        try:
+            top_level = {p.name for p in folder_path.iterdir()}
+        except OSError as exc:
+            raise FileNotFoundError(
+                f"Round folder not accessible for round '{key}': {folder_path}"
+            ) from exc
+
+        if "derived" in top_level and derived_path.exists():
             processing_manifests[key] = load_processing_manifest(derived_path)
-        elif root_path.exists():
+        elif "processing_manifest.json" in top_level:
             processing_manifests[key] = load_processing_manifest(root_path)
         else:
             raise FileNotFoundError(
