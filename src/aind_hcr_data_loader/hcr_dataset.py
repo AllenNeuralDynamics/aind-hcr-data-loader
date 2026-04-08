@@ -470,7 +470,8 @@ class HCRRound:
             cols_to_keep = ["cell_id", "volume", "x_centroid", "y_centroid", "z_centroid"]
             df_cells = df[cols_to_keep].drop_duplicates()
         elif source == "mixed_cxg":
-            print(f"Loading mixed cxg for round {self.round_key}")
+            if verbose:
+                print(f"Loading mixed cxg for round {self.round_key}")
             try:
                 df = pd.read_csv(self.spot_files.mixed_cxg)
             except Exception as e:
@@ -487,8 +488,6 @@ class HCRRound:
                 centroids, columns=["z_centroid", "y_centroid", "x_centroid", "cell_id"]
             )
             # Retain the original cell_id values from the centroids data
-        if verbose:
-            print(f"Number of cells in {source} for round {self.round_key}: {len(df_cells)}")
         return df_cells
 
     def load_spots(self, 
