@@ -1,6 +1,6 @@
 """Init package"""
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 # Pairwise unmixing
 from aind_hcr_data_loader.pairwise_dataset import (  # noqa: F401
