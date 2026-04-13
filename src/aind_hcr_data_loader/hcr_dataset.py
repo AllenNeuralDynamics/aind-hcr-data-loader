@@ -573,6 +573,9 @@ class HCRRound:
                 raise ValueError(f"roi_filter_type must be 'volume', 'comprehensive', or None, got {roi_filter_type}")
 
         spot_file_path = getattr(self.spot_files, table_type)
+        print(f"[DEBUG load_spots] round={self.round_key} table_type={table_type} spot_file_path={spot_file_path}")
+        if spot_file_path is not None:
+            print(f"[DEBUG load_spots] file exists={spot_file_path.exists()}")
 
         with open(spot_file_path, "rb") as f:
             spots_data = pd.read_pickle(f)
@@ -2474,8 +2477,14 @@ def get_spot_files(round_dict: dict, data_dir: Path):
         # picking up artefact files with a different round number (e.g. R-1) when
         # multiple pkl files are present in the same directory.
         round_num = key[1:]  # 'R2' -> '2'
+        print(f"[DEBUG get_spot_files] key={key} round_num={round_num}")
+        print(f"[DEBUG get_spot_files] folder_path={folder_path} exists={folder_path.exists()}")
+        if folder_path.exists():
+            pkl_files = list(folder_path.glob("*.pkl"))
+            print(f"[DEBUG get_spot_files] .pkl files in folder: {[f.name for f in pkl_files]}")
         unmixed_spots = next(folder_path.absolute().glob(f"unmixed_spots_R{round_num}*.pkl"), None)
         mixed_spots = next(folder_path.absolute().glob(f"mixed_spots_R{round_num}.pkl"), None)
+        print(f"[DEBUG get_spot_files] unmixed_spots={unmixed_spots}  mixed_spots={mixed_spots}")
         stats = folder_path / "spot_unmixing_stats.csv"
         ratios_file = next(folder_path.absolute().glob("*_ratios.txt"), None)
         spot_files[key] = SpotFiles(
