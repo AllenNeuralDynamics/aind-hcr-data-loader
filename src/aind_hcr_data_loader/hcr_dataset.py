@@ -293,9 +293,15 @@ class HCRRound:
         self.segmentation_files = segmentation_files
         self.spot_detection_files = spot_detection_files
         self.processing_manifest = processing_manifest
+        self.spot_channels = processing_manifest['spot_channels']
         self.tile_alignment_files = tile_alignment_files
         self.metadata_files = metadata_files
         self.parent_dataset = parent_dataset
+
+    @property
+    def channels(self):
+        """List of available channels for this round."""
+        return self.zarr_files.get_channels()
 
     def get_channels(self, data_type="fused"):
         """
