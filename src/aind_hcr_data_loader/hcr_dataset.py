@@ -2484,6 +2484,28 @@ def get_spot_files(round_dict: dict, data_dir: Path):
             print(f"[DEBUG get_spot_files] .pkl files in folder: {[f.name for f in pkl_files]}")
         unmixed_spots = next(folder_path.absolute().glob(f"unmixed_spots_R{round_num}*.pkl"), None)
         mixed_spots = next(folder_path.absolute().glob(f"mixed_spots_R{round_num}.pkl"), None)
+
+        # Fallback: if the correctly-numbered files are absent, the upstream pipeline
+        # only wrote R-1 files (common for the first round).  Use those instead.
+        if unmixed_spots is None:
+            fallback = next(folder_path.absolute().glob("unmixed_spots_R-1*.pkl"), None)
+            if fallback is not None:
+                import warnings as _warnings
+                _warnings.warn(
+                    f"[get_spot_files] {key}: no unmixed_spots_R{round_num}*.pkl found; "
+                    f"falling back to R-1 file: {fallback.name}"
+                )
+                unmixed_spots = fallback
+        if mixed_spots is None:
+            fallback = next(folder_path.absolute().glob("mixed_spots_R-1.pkl"), None)
+            if fallback is not None:
+                import warnings as _warnings
+                _warnings.warn(
+                    f"[get_spot_files] {key}: no mixed_spots_R{round_num}.pkl found; "
+                    f"falling back to R-1 file: {fallback.name}"
+                )
+                mixed_spots = fallback
+
         print(f"[DEBUG get_spot_files] unmixed_spots={unmixed_spots}  mixed_spots={mixed_spots}")
         stats = folder_path / "spot_unmixing_stats.csv"
         ratios_file = next(folder_path.absolute().glob("*_ratios.txt"), None)
