@@ -534,6 +534,7 @@ class PairwiseUnmixingDataset(HCRDataset):
         inhibitory_analysis: Optional[InhibitoryCellAnalysis] = None,
         source_dataset: Optional[HCRDataset] = None,
         metadata: dict = None,
+        min_dist: int = 1,
     ):
         super().__init__(
             rounds=rounds,
@@ -547,6 +548,7 @@ class PairwiseUnmixingDataset(HCRDataset):
         self.aggregated_cxg_mixed = aggregated_cxg_mixed
         self.inhibitory_analysis = inhibitory_analysis
         self.source_dataset = source_dataset
+        self.min_dist = min_dist
 
     # ------------------------------------------------------------------
     # Pairwise-specific loaders
@@ -674,6 +676,7 @@ class PairwiseUnmixingDataset(HCRDataset):
             print(f"Mouse ID : {self.mouse_id}")
         if self.pairwise_asset_path:
             print(f"Asset    : {self.pairwise_asset_path.name}")
+        print(f"min_dist : {self.min_dist}")
         print(f"Rounds   : {', '.join(self.get_rounds())}")
         print()
         for rk, rnd in self.rounds.items():
@@ -774,16 +777,30 @@ def _discover_round_subfolders(
     return {rk: fp for _, rk, fp in found}
 
 
-def _parse_spot_files(round_key: str, round_folder: Path) -> SpotFiles:
+def _parse_spot_files(round_key: str, round_folder: Path, min_dist: int = 1) -> SpotFiles:
     """
     Build a ``SpotFiles`` object for one pairwise-unmixing round folder.
 
     Pairwise spot files use the round number from the key (e.g. ``R3`` → 3)
     in their filenames.
+
+    Parameters
+    ----------
+    min_dist : int
+        Preferred ``minDist`` value when multiple unmixed-spots pickles exist
+        (e.g. ``unmixed_spots_R4_minDist_0.pkl`` vs ``_minDist_1.pkl``).
+        Defaults to ``1``.  Falls back to any matching pickle if the requested
+        version is absent.
     """
     rnum = round_key[1:]  # 'R3' → '3'
 
-    unmixed_spots = next(round_folder.glob(f"unmixed_spots_R{rnum}*.pkl"), None)
+    # Try the explicit minDist variant first, then fall back to any match.
+    preferred = round_folder / f"unmixed_spots_R{rnum}_minDist_{min_dist}.pkl"
+    if preferred.exists():
+        unmixed_spots = preferred
+    else:
+        unmixed_spots = next(round_folder.glob(f"unmixed_spots_R{rnum}*.pkl"), None)
+
     mixed_spots = next(round_folder.glob(f"mixed_spots_R{rnum}.pkl"), None)
 
     return SpotFiles(
@@ -852,6 +869,7 @@ def create_pairwise_unmixing_dataset(
     pairwise_asset_path: Path,
     source_dataset: Optional[HCRDataset] = None,
     config_path: Optional[Path] = None,
+    min_dist: int = 1,
 ) -> PairwiseUnmixingDataset:
     """
     Build a ``PairwiseUnmixingDataset`` from a pairwise unmixing asset folder.
@@ -875,6 +893,9 @@ def create_pairwise_unmixing_dataset(
     config_path : Path, optional
         Path to ``MOUSE_HCR_CONFIG.json``.  Currently used only to signal
         intent; full config-driven loading is a TODO (see note below).
+    min_dist : int, optional
+        Preferred ``minDist`` value when selecting unmixed-spots pickle files
+        (e.g. ``unmixed_spots_R4_minDist_1.pkl``).  Defaults to ``1``.
 
     Returns
     -------
@@ -939,7 +960,7 @@ def create_pairwise_unmixing_dataset(
             with open(unmixing_config_path, "r") as f:
                 unmixing_config = json.load(f)
 
-        spot_files = _parse_spot_files(round_key, round_folder)
+        spot_files = _parse_spot_files(round_key, round_folder, min_dist=min_dist)
         diagnostics = _parse_diagnostics(round_key, round_folder)
 
         rounds[round_key] = PairwiseUnmixingRound(
@@ -982,6 +1003,7 @@ def create_pairwise_unmixing_dataset(
         aggregated_cxg_mixed=aggregated_cxg_mixed,
         inhibitory_analysis=inhibitory_analysis,
         source_dataset=source_dataset,
+        min_dist=min_dist,
     )
 
     # Back-fill parent_dataset reference on each round
