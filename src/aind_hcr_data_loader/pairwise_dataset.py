@@ -535,6 +535,8 @@ class PairwiseUnmixingDataset(HCRDataset):
         source_dataset: Optional[HCRDataset] = None,
         metadata: dict = None,
         min_dist: int = 1,
+        unmixed_spots_parquet: Optional[Path] = None,
+        removed_spots_parquet: Optional[Path] = None,
     ):
         super().__init__(
             rounds=rounds,
@@ -549,6 +551,8 @@ class PairwiseUnmixingDataset(HCRDataset):
         self.inhibitory_analysis = inhibitory_analysis
         self.source_dataset = source_dataset
         self.min_dist = min_dist
+        self.unmixed_spots_parquet = unmixed_spots_parquet
+        self.removed_spots_parquet = removed_spots_parquet
 
     # ------------------------------------------------------------------
     # Pairwise-specific loaders
@@ -581,6 +585,39 @@ class PairwiseUnmixingDataset(HCRDataset):
         df = pd.read_csv(path, index_col=0)
         df.index.name = "cell_id"
         return df
+
+    def load_spots_parquet(self, return_removed: bool = False) -> pd.DataFrame:
+        """
+        Load the all-rounds spots parquet file(s).
+
+        Parameters
+        ----------
+        return_removed : bool
+            ``False`` (default) — return only unmixed spots.
+            ``True`` — combine unmixed and removed spots into one DataFrame.
+            The combined frame has a ``removed`` bool column (``False`` for
+            unmixed rows, ``True`` for removed rows) and ``unmixed_chan``
+            (``NaN`` for removed rows).  Columns present only in unmixed
+            (``z_intensity_vs_removed``, ``z_vetoed``, ``crosstalk_score``)
+            are dropped before concatenation.
+
+        Returns
+        -------
+        pd.DataFrame
+        """
+        if self.unmixed_spots_parquet is None or not self.unmixed_spots_parquet.exists():
+            raise FileNotFoundError(f"Unmixed spots parquet not found: {self.unmixed_spots_parquet}")
+
+        unmixed = pd.read_parquet(self.unmixed_spots_parquet)
+
+        if not return_removed:
+            return unmixed
+
+        if self.removed_spots_parquet is None or not self.removed_spots_parquet.exists():
+            raise FileNotFoundError(f"Removed spots parquet not found: {self.removed_spots_parquet}")
+
+        removed = pd.read_parquet(self.removed_spots_parquet)
+        return _combine_spots(unmixed, removed)
 
     def load_inhibitory_cells(self, unmixed: bool = True) -> pd.DataFrame:
         """
@@ -718,9 +755,12 @@ class PairwiseUnmixingDataset(HCRDataset):
             "pairwise_asset_path",
             "aggregated_cxg_unmixed",
             "aggregated_cxg_mixed",
+            "unmixed_spots_parquet",
+            "removed_spots_parquet",
             "inhibitory_analysis",
             "source_dataset",
             "load_aggregated_cxg",
+            "load_spots_parquet",
             "load_inhibitory_cells",
             "load_cluster_labels",
             "load_sorted_cell_ids",
@@ -732,6 +772,28 @@ class PairwiseUnmixingDataset(HCRDataset):
 # ---------------------------------------------------------------------------
 # Internal file-discovery helpers
 # ---------------------------------------------------------------------------
+
+
+def _combine_spots(unmixed: pd.DataFrame, removed: pd.DataFrame) -> pd.DataFrame:
+    """
+    Combine unmixed and removed spot DataFrames into a single frame.
+
+    Reconciliation rules:
+    - ``removed`` column: added to unmixed as ``False``; already present in removed as ``True``.
+    - ``unmixed_chan`` column: already present in unmixed; added to removed as ``NaN``.
+    - Columns only in unmixed (``z_intensity_vs_removed``, ``z_vetoed``,
+      ``crosstalk_score``) are dropped before concatenation.
+    """
+    unmixed_only_cols = {"z_intensity_vs_removed", "z_vetoed", "crosstalk_score"}
+
+    unmixed = unmixed.drop(columns=[c for c in unmixed_only_cols if c in unmixed.columns])
+    unmixed = unmixed.copy()
+    unmixed["removed"] = False
+
+    removed = removed.copy()
+    removed["unmixed_chan"] = pd.NA
+
+    return pd.concat([unmixed, removed], ignore_index=True)
 
 
 def _check(path: Path) -> Optional[Path]:
@@ -988,6 +1050,12 @@ def create_pairwise_unmixing_dataset(
     )
 
     # ------------------------------------------------------------------ #
+    # 3b. All-rounds spots parquet files                                  #
+    # ------------------------------------------------------------------ #
+    unmixed_spots_parquet = _check(pairwise_asset_path / "unmixed_spots_all_rounds.parquet")
+    removed_spots_parquet = _check(pairwise_asset_path / "removed_spots_all_rounds.parquet")
+
+    # ------------------------------------------------------------------ #
     # 4. Inhibitory-cell analysis                                         #
     # ------------------------------------------------------------------ #
     inhibitory_analysis = _parse_inhibitory_analysis(pairwise_asset_path)
@@ -1004,6 +1072,8 @@ def create_pairwise_unmixing_dataset(
         inhibitory_analysis=inhibitory_analysis,
         source_dataset=source_dataset,
         min_dist=min_dist,
+        unmixed_spots_parquet=unmixed_spots_parquet,
+        removed_spots_parquet=removed_spots_parquet,
     )
 
     # Back-fill parent_dataset reference on each round
