@@ -839,6 +839,7 @@ class HCRDataset:
         self.dataset_names = dataset_names
         self.metrics_base_path = metrics_base_path
         self.cell_typing_files = cell_typing_files
+        self.czstack_coreg_files = None
 
         # Initialize rounds
         self.rounds = rounds or {}
@@ -1624,6 +1625,39 @@ class HCRDataset:
 
         return annotated
 
+    # ------------------------------------------------------------------
+    # CZ-stack / HCR co-registration methods
+    # ------------------------------------------------------------------
+
+    def load_coreg_table(self) -> "pd.DataFrame":
+        """
+        Load the co-registration match table from the czstack-hcr coreg asset.
+
+        Returns
+        -------
+        pd.DataFrame
+
+        Raises
+        ------
+        ValueError
+            If no ``czstack_coreg_files`` have been attached to this dataset.
+        FileNotFoundError
+            If the coreg table CSV does not exist on disk.
+
+        Examples
+        --------
+        >>> coreg_df = dataset.load_coreg_table()
+        """
+        if self.czstack_coreg_files is None:
+            raise ValueError(
+                "No czstack_coreg_files attached to this dataset. "
+                "Either set dataset.czstack_coreg_files = create_coreg_files(...), "
+                "or add a 'czstack_hcr_coreg' key to the catalog record and reload via "
+                "create_hcr_dataset_from_schema()."
+            )
+        from aind_hcr_data_loader.coreg_dataset import load_coreg_table
+        return load_coreg_table(self.czstack_coreg_files)
+
     def _print_basic_info(self):
         """Print basic dataset information."""
         print("HCR Dataset Summary")
@@ -1757,7 +1791,14 @@ class HCRDataset:
         Excludes dunder methods and separates attributes from methods.
         """
         # Public attributes specific to HCRDataset
-        dataset_attrs = ["rounds", "mouse_id", "metadata", "dataset_names", "cell_typing_files"]
+        dataset_attrs = [
+            "rounds",
+            "mouse_id",
+            "metadata",
+            "dataset_names",
+            "cell_typing_files",
+            "czstack_coreg_files",
+        ]
 
         # Public methods specific to HCRDataset
         dataset_methods = [
@@ -1780,6 +1821,7 @@ class HCRDataset:
             "load_taxonomy_cell_types",
             "load_taxonomy_cell_types_h5ad",
             "annotate_with_cell_types",
+            "load_coreg_table",
             "summary",
         ]
 
@@ -1791,11 +1833,13 @@ class HCRDataset:
         rounds_list = list(self.rounds.keys())
         total_channels = sum(len(round_obj.get_channels()) for round_obj in self.rounds.values())
         ct_status = "✓" if self.cell_typing_files is not None else "✗"
+        coreg_status = "✓" if self.czstack_coreg_files is not None else "✗"
         return (
             f"HCRDataset(mouse_id='{self.mouse_id}', "
             f"rounds={rounds_list}, "
             f"total_channels={total_channels}, "
-            f"cell_typing={ct_status})"
+            f"cell_typing={ct_status}, "
+            f"coreg={coreg_status})"
         )
 
 
@@ -2083,6 +2127,17 @@ def create_hcr_dataset_from_schema(
             print(f"Cell-typing asset attached: {dataset.cell_typing_files}")
         except FileNotFoundError as e:
             print(f"Warning: Could not attach cell-typing asset: {e}")
+
+    # Attach czstack-hcr coreg asset if present in derived_assets
+    coreg_asset = derived_assets.get("czstack_hcr_coreg")
+    if coreg_asset:
+        from aind_hcr_data_loader.coreg_dataset import create_coreg_files
+        coreg_asset_path = data_dir / coreg_asset
+        try:
+            dataset.czstack_coreg_files = create_coreg_files(coreg_asset_path)
+            print(f"Coreg asset attached: {dataset.czstack_coreg_files}")
+        except FileNotFoundError as e:
+            print(f"Warning: Could not attach coreg asset: {e}")
 
     # Store mouse_metadata and notes in dataset.metadata
     mouse_metadata = schema.get("mouse_metadata", {})

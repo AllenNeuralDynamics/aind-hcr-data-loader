@@ -28,3 +28,14 @@ from aind_hcr_data_loader.codeocean_utils import (  # noqa: F401
     attach_mouse_record_to_capsule,
     attach_mouse_record_to_pipeline,
 )
+
+# CZ-stack / HCR co-registration
+from aind_hcr_data_loader.coreg_dataset import (  # noqa: F401
+    CoregFiles,
+    create_coreg_files,
+)
+
+# Convenience loaders
+from aind_hcr_data_loader.loaders import (  # noqa: F401
+    get_hcr_dataset_pairwise,
+)

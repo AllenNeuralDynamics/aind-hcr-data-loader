@@ -1,5 +1,20 @@
 # Changelog
 
+**WIP**
+
+*New module: `loaders.py`*
++ `get_hcr_dataset_pairwise()` — convenience loader that attaches assets, loads the HCR dataset, and (optionally) loads the pairwise-unmixing dataset and spots for a given mouse ID in one call
++ Exported from `__init__` for top-level access
+
+*New module: `coreg_dataset.py`*
++ `CoregFiles` dataclass — holds paths to `{mouse_id}_coreg_table.csv` and `{mouse_id}_*_czstack_cell_centroids.csv`
++ `create_coreg_files()` — factory that resolves both file paths from a czstack-hcr coreg asset folder
++ Exported from `__init__` for top-level access
+
+*`hcr_dataset.py`*
++ `HCRDataset` gains `czstack_coreg_files` attribute (auto-attached from `derived_assets.czstack_hcr_coreg` in `create_hcr_dataset_from_schema()`)
++ `HCRDataset.load_coreg_table()` — loads the coreg match table CSV as a DataFrame
+
 **v0.7.0 (04/02/2026)**
 
 *New module: `codeocean_utils.py`*
