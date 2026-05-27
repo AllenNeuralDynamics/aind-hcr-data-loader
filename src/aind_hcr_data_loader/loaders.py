@@ -24,6 +24,7 @@ def get_hcr_dataset_pairwise(
     bucket_name: str = BUCKET_NAME,
     load_spots: bool = True,
     return_removed: bool = False,
+    coreg_cells_only: bool = False,
     catalog_path: Path | None = None,
 ) -> tuple:
     """
@@ -37,6 +38,8 @@ def get_hcr_dataset_pairwise(
         the catalog record, or when ``load_spots=False``.
         Pass ``return_removed=True`` to include removed spots in the combined
         DataFrame (distinguished by the ``removed`` bool column).
+        Pass ``coreg_cells_only=True`` to load only spots whose ``cell_id`` is
+        present in ``dataset.load_coreg_table()['hcr_id']``.
     """
     mouse_id = str(mouse_id)
 
@@ -70,7 +73,22 @@ def get_hcr_dataset_pairwise(
         )
         pw_ds.summary()
         if load_spots:
-            spots = pw_ds.load_spots_parquet(return_removed=return_removed)
+            coreg_cell_ids = None
+            if coreg_cells_only:
+                coreg_df = dataset.load_coreg_table()
+                if "hcr_id" not in coreg_df.columns:
+                    raise ValueError(
+                        "Coreg table does not contain expected 'hcr_id' column."
+                    )
+                coreg_cell_ids = coreg_df["hcr_id"].dropna().unique().tolist()
+                print(
+                    f"Loading spots for coregistered cells only "
+                    f"(n={len(coreg_cell_ids)} unique hcr_id values)."
+                )
+            spots = pw_ds.load_spots_parquet(
+                return_removed=return_removed,
+                cell_ids=coreg_cell_ids,
+            )
     else:
         print("No pairwise_unmixing asset found in catalog record — skipping.")
         pw_ds = None

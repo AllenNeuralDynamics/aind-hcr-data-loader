@@ -5,6 +5,7 @@
 *New module: `loaders.py`*
 + `get_hcr_dataset_pairwise()` — convenience loader that attaches assets, loads the HCR dataset, and (optionally) loads the pairwise-unmixing dataset and spots for a given mouse ID in one call
 + Exported from `__init__` for top-level access
++ `get_hcr_dataset_pairwise(coreg_cells_only=True)` now supports loading only spots whose `cell_id` is present in the coreg table (`hcr_id`) via parquet predicate pushdown, reducing memory/runtime for coreg-focused analysis
 
 *New module: `coreg_dataset.py`*
 + `CoregFiles` dataclass — holds paths to `{mouse_id}_coreg_table.csv` and `{mouse_id}_*_czstack_cell_centroids.csv`
@@ -14,6 +15,9 @@
 *`hcr_dataset.py`*
 + `HCRDataset` gains `czstack_coreg_files` attribute (auto-attached from `derived_assets.czstack_hcr_coreg` in `create_hcr_dataset_from_schema()`)
 + `HCRDataset.load_coreg_table()` — loads the coreg match table CSV as a DataFrame
+
+*`pairwise_dataset.py`*
++ `PairwiseUnmixingDataset.load_spots_parquet(cell_ids=...)` now uses parquet predicate pushdown when filtering by `cell_id`
 
 **v0.7.0 (04/02/2026)**
 

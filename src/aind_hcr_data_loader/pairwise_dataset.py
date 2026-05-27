@@ -586,7 +586,11 @@ class PairwiseUnmixingDataset(HCRDataset):
         df.index.name = "cell_id"
         return df
 
-    def load_spots_parquet(self, return_removed: bool = False) -> pd.DataFrame:
+    def load_spots_parquet(
+        self,
+        return_removed: bool = False,
+        cell_ids: Optional[List] = None,
+    ) -> pd.DataFrame:
         """
         Load the all-rounds spots parquet file(s).
 
@@ -600,15 +604,33 @@ class PairwiseUnmixingDataset(HCRDataset):
             (``NaN`` for removed rows).  Columns present only in unmixed
             (``z_intensity_vs_removed``, ``z_vetoed``, ``crosstalk_score``)
             are dropped before concatenation.
+        cell_ids : list, optional
+            Optional subset of ``cell_id`` values to load.  When provided,
+            spots are filtered to those cells only using parquet predicate
+            pushdown.
 
         Returns
         -------
         pd.DataFrame
         """
+        def _read_spots(path: Path) -> pd.DataFrame:
+            if cell_ids is None:
+                return pd.read_parquet(path)
+
+            import pyarrow as pa
+            import pyarrow.compute as pc
+            import pyarrow.dataset as ds
+
+            spot_ds = ds.dataset(path, format="parquet")
+            table = spot_ds.to_table(
+                filter=pc.field("cell_id").isin(pa.array(list(cell_ids)))
+            )
+            return table.to_pandas()
+
         if self.unmixed_spots_parquet is None or not self.unmixed_spots_parquet.exists():
             raise FileNotFoundError(f"Unmixed spots parquet not found: {self.unmixed_spots_parquet}")
 
-        unmixed = pd.read_parquet(self.unmixed_spots_parquet)
+        unmixed = _read_spots(self.unmixed_spots_parquet)
 
         if not return_removed:
             return unmixed
@@ -616,7 +638,7 @@ class PairwiseUnmixingDataset(HCRDataset):
         if self.removed_spots_parquet is None or not self.removed_spots_parquet.exists():
             raise FileNotFoundError(f"Removed spots parquet not found: {self.removed_spots_parquet}")
 
-        removed = pd.read_parquet(self.removed_spots_parquet)
+        removed = _read_spots(self.removed_spots_parquet)
         return _combine_spots(unmixed, removed)
 
     def load_inhibitory_cells(self, unmixed: bool = True) -> pd.DataFrame:
