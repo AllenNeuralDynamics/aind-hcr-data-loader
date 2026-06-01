@@ -106,7 +106,7 @@ import re
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
 import pandas as pd
 
@@ -119,6 +119,9 @@ from aind_hcr_data_loader.hcr_dataset import (
     ZarrDataFiles,
     MetadataFiles,
 )
+
+if TYPE_CHECKING:
+    import anndata as ad
 
 
 # ---------------------------------------------------------------------------
@@ -244,12 +247,40 @@ class InhibitoryCellAnalysis:
     mixed_cluster_labels: Optional[Path] = None
     mixed_sorted_cell_ids: Optional[Path] = None
     mixed_plots: Dict[str, Path] = field(default_factory=dict)
+    paths: Dict[str, Dict[str, Dict[str, Optional[Path]]]] = field(
+        default_factory=dict
+    )
+    plots_by_scope: Dict[str, Dict[str, Dict[str, Path]]] = field(
+        default_factory=dict
+    )
 
     # ------------------------------------------------------------------
     # Loaders
     # ------------------------------------------------------------------
 
-    def load_inhibitory_cells(self, unmixed: bool = True) -> pd.DataFrame:
+    def _resolve_path(
+        self,
+        kind: str,
+        unmixed: bool = True,
+        all_spots: bool = False,
+    ) -> Optional[Path]:
+        label = "unmixed" if unmixed else "mixed"
+        scope = "all_spots" if all_spots else "filtered"
+
+        scoped_paths = self.paths.get(scope, {}).get(label, {})
+        path = scoped_paths.get(kind)
+        if path is not None:
+            return path
+
+        legacy_paths = self.paths.get("legacy", {}).get(label, {})
+        return legacy_paths.get(kind)
+
+    def load_inhibitory_cells(
+        self,
+        unmixed: bool = True,
+        all_spots: bool = False,
+        as_anndata: bool = False,
+    ) -> Union[pd.DataFrame, "ad.AnnData"]:
         """
         Load the inhibitory-cell table.
 
@@ -257,29 +288,52 @@ class InhibitoryCellAnalysis:
         ----------
         unmixed : bool
             ``True`` → load from the ``unmixed`` analysis folder.
+        all_spots : bool
+            ``False`` (default) → load the filtered result.
+            ``True`` → load the all-spots result when available.
+        as_anndata : bool
+            ``False`` (default) → return a DataFrame.
+            ``True`` → return an AnnData object with gene names stripped from
+            ``R?-channel-gene`` columns.
         """
-        path = (
-            self.unmixed_inhibitory_cells if unmixed else self.mixed_inhibitory_cells
+        path = self._resolve_path(
+            kind="inhibitory_cells",
+            unmixed=unmixed,
+            all_spots=all_spots,
         )
         if path is None or not path.exists():
             raise FileNotFoundError(f"Inhibitory cells file not found: {path}")
         df = pd.read_csv(path, index_col=0)
         df.index.name = "cell_id"
+        if as_anndata:
+            return _cxg_dataframe_to_anndata(df)
         return df
 
-    def load_cluster_labels(self, unmixed: bool = True) -> pd.DataFrame:
+    def load_cluster_labels(
+        self,
+        unmixed: bool = True,
+        all_spots: bool = False,
+    ) -> pd.DataFrame:
         """Load cluster-label assignments."""
-        path = (
-            self.unmixed_cluster_labels if unmixed else self.mixed_cluster_labels
+        path = self._resolve_path(
+            kind="cluster_labels",
+            unmixed=unmixed,
+            all_spots=all_spots,
         )
         if path is None or not path.exists():
             raise FileNotFoundError(f"Cluster labels file not found: {path}")
         return pd.read_csv(path, index_col=0)
 
-    def load_sorted_cell_ids(self, unmixed: bool = True) -> pd.DataFrame:
+    def load_sorted_cell_ids(
+        self,
+        unmixed: bool = True,
+        all_spots: bool = False,
+    ) -> pd.DataFrame:
         """Load the sorted-cell-id list."""
-        path = (
-            self.unmixed_sorted_cell_ids if unmixed else self.mixed_sorted_cell_ids
+        path = self._resolve_path(
+            kind="sorted_cell_ids",
+            unmixed=unmixed,
+            all_spots=all_spots,
         )
         if path is None or not path.exists():
             raise FileNotFoundError(f"Sorted cell IDs file not found: {path}")
@@ -531,6 +585,7 @@ class PairwiseUnmixingDataset(HCRDataset):
         pairwise_asset_path: Path = None,
         aggregated_cxg_unmixed: Optional[Path] = None,
         aggregated_cxg_mixed: Optional[Path] = None,
+        aggregated_cxg_paths: Optional[Dict[str, Dict[str, Optional[Path]]]] = None,
         inhibitory_analysis: Optional[InhibitoryCellAnalysis] = None,
         source_dataset: Optional[HCRDataset] = None,
         metadata: dict = None,
@@ -548,6 +603,13 @@ class PairwiseUnmixingDataset(HCRDataset):
         self.pairwise_asset_path = Path(pairwise_asset_path) if pairwise_asset_path else None
         self.aggregated_cxg_unmixed = aggregated_cxg_unmixed
         self.aggregated_cxg_mixed = aggregated_cxg_mixed
+        self.aggregated_cxg_paths = aggregated_cxg_paths or {
+            "filtered": {
+                "unmixed": aggregated_cxg_unmixed,
+                "mixed": aggregated_cxg_mixed,
+            },
+            "all_spots": {"unmixed": None, "mixed": None},
+        }
         self.inhibitory_analysis = inhibitory_analysis
         self.source_dataset = source_dataset
         self.min_dist = min_dist
@@ -558,7 +620,12 @@ class PairwiseUnmixingDataset(HCRDataset):
     # Pairwise-specific loaders
     # ------------------------------------------------------------------
 
-    def load_aggregated_cxg(self, unmixed: bool = True) -> pd.DataFrame:
+    def load_aggregated_cxg(
+        self,
+        unmixed: bool = True,
+        all_spots: bool = False,
+        as_anndata: bool = False,
+    ) -> Union[pd.DataFrame, "ad.AnnData"]:
         """
         Load the pre-built all-rounds cell-by-gene table.
 
@@ -570,20 +637,34 @@ class PairwiseUnmixingDataset(HCRDataset):
         ----------
         unmixed : bool
             ``True`` → load unmixed table; ``False`` → mixed.
+        all_spots : bool
+            ``False`` (default) → load the filtered table.
+            ``True`` → load the all-spots table when available.
+        as_anndata : bool
+            ``False`` (default) → return a DataFrame.
+            ``True`` → return an AnnData object with gene names stripped from
+            ``R?-channel-gene`` columns.
 
         Returns
         -------
         pd.DataFrame
             Wide-format cell × gene matrix (``cell_id`` as index).
         """
-        path = self.aggregated_cxg_unmixed if unmixed else self.aggregated_cxg_mixed
         label = "unmixed" if unmixed else "mixed"
+        scope = "all_spots" if all_spots else "filtered"
+        path = self.aggregated_cxg_paths.get(scope, {}).get(label)
+
+        if path is None and not all_spots:
+            path = self.aggregated_cxg_unmixed if unmixed else self.aggregated_cxg_mixed
+
         if path is None or not path.exists():
             raise FileNotFoundError(
-                f"Aggregated {label} CxG not found: {path}"
+                f"Aggregated {label} CxG not found for scope '{scope}': {path}"
             )
         df = pd.read_csv(path, index_col=0)
         df.index.name = "cell_id"
+        if as_anndata:
+            return _cxg_dataframe_to_anndata(df)
         return df
 
     def load_spots_parquet(
@@ -641,7 +722,12 @@ class PairwiseUnmixingDataset(HCRDataset):
         removed = _read_spots(self.removed_spots_parquet)
         return _combine_spots(unmixed, removed)
 
-    def load_inhibitory_cells(self, unmixed: bool = True) -> pd.DataFrame:
+    def load_inhibitory_cells(
+        self,
+        unmixed: bool = True,
+        all_spots: bool = False,
+        as_anndata: bool = False,
+    ) -> Union[pd.DataFrame, "ad.AnnData"]:
         """
         Load the inhibitory-cell table from the top-level analysis folder.
 
@@ -649,6 +735,13 @@ class PairwiseUnmixingDataset(HCRDataset):
         ----------
         unmixed : bool
             ``True`` → ``inhibitory_cells_unmixed/`` folder.
+        all_spots : bool
+            ``False`` (default) → load the filtered result.
+            ``True`` → load the all-spots result when available.
+        as_anndata : bool
+            ``False`` (default) → return a DataFrame.
+            ``True`` → return an AnnData object with gene names stripped from
+            ``R?-channel-gene`` columns.
 
         Returns
         -------
@@ -656,19 +749,37 @@ class PairwiseUnmixingDataset(HCRDataset):
         """
         if self.inhibitory_analysis is None:
             raise ValueError("No inhibitory cell analysis found in this dataset.")
-        return self.inhibitory_analysis.load_inhibitory_cells(unmixed=unmixed)
+        return self.inhibitory_analysis.load_inhibitory_cells(
+            unmixed=unmixed,
+            all_spots=all_spots,
+            as_anndata=as_anndata,
+        )
 
-    def load_cluster_labels(self, unmixed: bool = True) -> pd.DataFrame:
+    def load_cluster_labels(
+        self,
+        unmixed: bool = True,
+        all_spots: bool = False,
+    ) -> pd.DataFrame:
         """Load cluster-label assignments from the inhibitory-cell analysis."""
         if self.inhibitory_analysis is None:
             raise ValueError("No inhibitory cell analysis found in this dataset.")
-        return self.inhibitory_analysis.load_cluster_labels(unmixed=unmixed)
+        return self.inhibitory_analysis.load_cluster_labels(
+            unmixed=unmixed,
+            all_spots=all_spots,
+        )
 
-    def load_sorted_cell_ids(self, unmixed: bool = True) -> pd.DataFrame:
+    def load_sorted_cell_ids(
+        self,
+        unmixed: bool = True,
+        all_spots: bool = False,
+    ) -> pd.DataFrame:
         """Load sorted-cell-id list from the inhibitory-cell analysis."""
         if self.inhibitory_analysis is None:
             raise ValueError("No inhibitory cell analysis found in this dataset.")
-        return self.inhibitory_analysis.load_sorted_cell_ids(unmixed=unmixed)
+        return self.inhibitory_analysis.load_sorted_cell_ids(
+            unmixed=unmixed,
+            all_spots=all_spots,
+        )
 
     def load_unmixing_diagnostics(self, round_key: str) -> PairwiseUnmixingDiagnostics:
         """
@@ -754,9 +865,17 @@ class PairwiseUnmixingDataset(HCRDataset):
                 f"mixed={'✓' if has_filt_m else '✗'}]"
             )
         print()
-        agg_u = self.aggregated_cxg_unmixed and self.aggregated_cxg_unmixed.exists()
-        agg_m = self.aggregated_cxg_mixed and self.aggregated_cxg_mixed.exists()
-        print(f"Aggregated CxG : unmixed={'✓' if agg_u else '✗'}, mixed={'✓' if agg_m else '✗'}")
+        agg_fu = self.aggregated_cxg_paths.get("filtered", {}).get("unmixed")
+        agg_fm = self.aggregated_cxg_paths.get("filtered", {}).get("mixed")
+        agg_au = self.aggregated_cxg_paths.get("all_spots", {}).get("unmixed")
+        agg_am = self.aggregated_cxg_paths.get("all_spots", {}).get("mixed")
+        print(
+            "Aggregated CxG : "
+            f"filtered[unmixed={'✓' if agg_fu and agg_fu.exists() else '✗'}, "
+            f"mixed={'✓' if agg_fm and agg_fm.exists() else '✗'}], "
+            f"all_spots[unmixed={'✓' if agg_au and agg_au.exists() else '✗'}, "
+            f"mixed={'✓' if agg_am and agg_am.exists() else '✗'}]"
+        )
         if self.inhibitory_analysis:
             print(f"Inhibitory analysis : {self.inhibitory_analysis}")
         if self.source_dataset is not None:
@@ -777,6 +896,7 @@ class PairwiseUnmixingDataset(HCRDataset):
             "pairwise_asset_path",
             "aggregated_cxg_unmixed",
             "aggregated_cxg_mixed",
+            "aggregated_cxg_paths",
             "unmixed_spots_parquet",
             "removed_spots_parquet",
             "inhibitory_analysis",
@@ -816,6 +936,35 @@ def _combine_spots(unmixed: pd.DataFrame, removed: pd.DataFrame) -> pd.DataFrame
     removed["unmixed_chan"] = pd.NA
 
     return pd.concat([unmixed, removed], ignore_index=True)
+
+
+def _cxg_dataframe_to_anndata(df: pd.DataFrame) -> "ad.AnnData":
+    """Convert a wide cell-by-gene DataFrame to AnnData.
+
+    Column names are reduced from ``R?-channel-gene`` to ``gene``. If that
+    reduction creates duplicate gene names, a ``ValueError`` is raised so the
+    caller can decide how to resolve the ambiguity.
+    """
+    try:
+        import anndata as ad
+    except ImportError as exc:
+        raise ImportError(
+            "AnnData conversion requires the optional 'anndata' package to be installed."
+        ) from exc
+
+    gene_names = [col.split("-", 2)[-1] for col in df.columns]
+    duplicated = pd.Index(gene_names)[pd.Index(gene_names).duplicated()].unique().tolist()
+    if duplicated:
+        raise ValueError(
+            "Duplicate gene names after splitting round/channel prefixes: "
+            f"{duplicated}. Resolve the duplicated markers before loading as AnnData."
+        )
+
+    return ad.AnnData(
+        X=df.to_numpy(dtype="float32", copy=True),
+        obs=pd.DataFrame(index=df.index.astype(str)),
+        var=pd.DataFrame(index=pd.Index(gene_names, name="gene")),
+    )
 
 
 def _check(path: Path) -> Optional[Path]:
@@ -923,24 +1072,171 @@ def _parse_inhibitory_analysis(
     pairwise_asset_path: Path,
 ) -> InhibitoryCellAnalysis:
     """Build an ``InhibitoryCellAnalysis`` from the top-level analysis folders."""
-    u_dir = pairwise_asset_path / "inhibitory_cells_unmixed"
-    m_dir = pairwise_asset_path / "inhibitory_cells_mixed"
+    legacy_u_dir = pairwise_asset_path / "inhibitory_cells_unmixed"
+    legacy_m_dir = pairwise_asset_path / "inhibitory_cells_mixed"
+    filtered_u_dir = pairwise_asset_path / "inhibitory_cells_unmixed_filtered"
+    filtered_m_dir = pairwise_asset_path / "inhibitory_cells_mixed_filtered"
+    all_spots_u_dir = pairwise_asset_path / "inhibitory_cells_unmixed_all_spots"
+    all_spots_m_dir = pairwise_asset_path / "inhibitory_cells_mixed_all_spots"
 
     def _plots(folder: Path) -> Dict[str, Path]:
         if not folder.exists():
             return {}
         return {p.stem: p for p in folder.glob("*.png")}
 
+    def _resolve(folder: Path, filename: str) -> Optional[Path]:
+        return _check(folder / filename)
+
+    paths = {
+        "filtered": {
+            "unmixed": {
+                "inhibitory_cells": _resolve(
+                    filtered_u_dir, "unmixed_inhibitory_cells_filtered.csv"
+                ),
+                "cluster_labels": _resolve(
+                    filtered_u_dir, "unmixed_cluster_labels_filtered.csv"
+                ),
+                "sorted_cell_ids": _resolve(
+                    filtered_u_dir, "unmixed_sorted_cell_ids_filtered.csv"
+                ),
+            },
+            "mixed": {
+                "inhibitory_cells": _resolve(
+                    filtered_m_dir, "mixed_inhibitory_cells_filtered.csv"
+                ),
+                "cluster_labels": _resolve(
+                    filtered_m_dir, "mixed_cluster_labels_filtered.csv"
+                ),
+                "sorted_cell_ids": _resolve(
+                    filtered_m_dir, "mixed_sorted_cell_ids_filtered.csv"
+                ),
+            },
+        },
+        "all_spots": {
+            "unmixed": {
+                "inhibitory_cells": _resolve(
+                    all_spots_u_dir, "unmixed_inhibitory_cells_all_spots.csv"
+                ),
+                "cluster_labels": _resolve(
+                    all_spots_u_dir, "unmixed_cluster_labels_all_spots.csv"
+                ),
+                "sorted_cell_ids": _resolve(
+                    all_spots_u_dir, "unmixed_sorted_cell_ids_all_spots.csv"
+                ),
+            },
+            "mixed": {
+                "inhibitory_cells": _resolve(
+                    all_spots_m_dir, "mixed_inhibitory_cells_all_spots.csv"
+                ),
+                "cluster_labels": _resolve(
+                    all_spots_m_dir, "mixed_cluster_labels_all_spots.csv"
+                ),
+                "sorted_cell_ids": _resolve(
+                    all_spots_m_dir, "mixed_sorted_cell_ids_all_spots.csv"
+                ),
+            },
+        },
+        "legacy": {
+            "unmixed": {
+                "inhibitory_cells": _resolve(legacy_u_dir, "unmixed_inhibitory_cells.csv"),
+                "cluster_labels": _resolve(legacy_u_dir, "unmixed_cluster_labels.csv"),
+                "sorted_cell_ids": _resolve(legacy_u_dir, "unmixed_sorted_cell_ids.csv"),
+            },
+            "mixed": {
+                "inhibitory_cells": _resolve(legacy_m_dir, "mixed_inhibitory_cells.csv"),
+                "cluster_labels": _resolve(legacy_m_dir, "mixed_cluster_labels.csv"),
+                "sorted_cell_ids": _resolve(legacy_m_dir, "mixed_sorted_cell_ids.csv"),
+            },
+        },
+    }
+
+    plots_by_scope = {
+        "filtered": {
+            "unmixed": _plots(filtered_u_dir),
+            "mixed": _plots(filtered_m_dir),
+        },
+        "all_spots": {
+            "unmixed": _plots(all_spots_u_dir),
+            "mixed": _plots(all_spots_m_dir),
+        },
+        "legacy": {
+            "unmixed": _plots(legacy_u_dir),
+            "mixed": _plots(legacy_m_dir),
+        },
+    }
+
     return InhibitoryCellAnalysis(
-        unmixed_inhibitory_cells=_check(u_dir / "unmixed_inhibitory_cells.csv"),
-        unmixed_cluster_labels=_check(u_dir / "unmixed_cluster_labels.csv"),
-        unmixed_sorted_cell_ids=_check(u_dir / "unmixed_sorted_cell_ids.csv"),
-        unmixed_plots=_plots(u_dir),
-        mixed_inhibitory_cells=_check(m_dir / "mixed_inhibitory_cells.csv"),
-        mixed_cluster_labels=_check(m_dir / "mixed_cluster_labels.csv"),
-        mixed_sorted_cell_ids=_check(m_dir / "mixed_sorted_cell_ids.csv"),
-        mixed_plots=_plots(m_dir),
+        unmixed_inhibitory_cells=(
+            paths["filtered"]["unmixed"]["inhibitory_cells"]
+            or paths["legacy"]["unmixed"]["inhibitory_cells"]
+        ),
+        unmixed_cluster_labels=(
+            paths["filtered"]["unmixed"]["cluster_labels"]
+            or paths["legacy"]["unmixed"]["cluster_labels"]
+        ),
+        unmixed_sorted_cell_ids=(
+            paths["filtered"]["unmixed"]["sorted_cell_ids"]
+            or paths["legacy"]["unmixed"]["sorted_cell_ids"]
+        ),
+        unmixed_plots=(
+            plots_by_scope["filtered"]["unmixed"]
+            or plots_by_scope["legacy"]["unmixed"]
+        ),
+        mixed_inhibitory_cells=(
+            paths["filtered"]["mixed"]["inhibitory_cells"]
+            or paths["legacy"]["mixed"]["inhibitory_cells"]
+        ),
+        mixed_cluster_labels=(
+            paths["filtered"]["mixed"]["cluster_labels"]
+            or paths["legacy"]["mixed"]["cluster_labels"]
+        ),
+        mixed_sorted_cell_ids=(
+            paths["filtered"]["mixed"]["sorted_cell_ids"]
+            or paths["legacy"]["mixed"]["sorted_cell_ids"]
+        ),
+        mixed_plots=(
+            plots_by_scope["filtered"]["mixed"]
+            or plots_by_scope["legacy"]["mixed"]
+        ),
+        paths=paths,
+        plots_by_scope=plots_by_scope,
     )
+
+
+def _discover_aggregated_cxg_paths(
+    pairwise_asset_path: Path,
+) -> Dict[str, Dict[str, Optional[Path]]]:
+    """Discover filtered and all-spots aggregated CxG paths."""
+
+    def _first_existing(candidates: List[Path]) -> Optional[Path]:
+        for candidate in candidates:
+            existing = _check(candidate)
+            if existing is not None:
+                return existing
+        return None
+
+    def _candidates(label: str, scope: str) -> List[Path]:
+        scoped_dir = pairwise_asset_path / f"all_cells_{label}_{scope}"
+        scoped_name = f"{label}_all_cells_{scope}.csv"
+        legacy_dir = pairwise_asset_path / f"all_cells_{label}"
+        legacy_name = f"{label}_all_cells.csv"
+        root_name = f"{label}_cell_by_gene_all_rounds.csv"
+        return [
+            scoped_dir / scoped_name,
+            legacy_dir / legacy_name,
+            pairwise_asset_path / root_name,
+        ]
+
+    return {
+        "filtered": {
+            "unmixed": _first_existing(_candidates("unmixed", "filtered")),
+            "mixed": _first_existing(_candidates("mixed", "filtered")),
+        },
+        "all_spots": {
+            "unmixed": _first_existing(_candidates("unmixed", "all_spots")),
+            "mixed": _first_existing(_candidates("mixed", "all_spots")),
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1062,14 +1358,9 @@ def create_pairwise_unmixing_dataset(
     # 3. Top-level aggregated CxG                                         #
     # Check legacy root-level filename first, then the newer subdir layout#
     # ------------------------------------------------------------------ #
-    aggregated_cxg_unmixed = (
-        _check(pairwise_asset_path / "unmixed_cell_by_gene_all_rounds.csv")
-        or _check(pairwise_asset_path / "all_cells_unmixed" / "unmixed_all_cells.csv")
-    )
-    aggregated_cxg_mixed = (
-        _check(pairwise_asset_path / "mixed_cell_by_gene_all_rounds.csv")
-        or _check(pairwise_asset_path / "all_cells_mixed" / "mixed_all_cells.csv")
-    )
+    aggregated_cxg_paths = _discover_aggregated_cxg_paths(pairwise_asset_path)
+    aggregated_cxg_unmixed = aggregated_cxg_paths["filtered"]["unmixed"]
+    aggregated_cxg_mixed = aggregated_cxg_paths["filtered"]["mixed"]
 
     # ------------------------------------------------------------------ #
     # 3b. All-rounds spots parquet files                                  #
@@ -1091,6 +1382,7 @@ def create_pairwise_unmixing_dataset(
         pairwise_asset_path=pairwise_asset_path,
         aggregated_cxg_unmixed=aggregated_cxg_unmixed,
         aggregated_cxg_mixed=aggregated_cxg_mixed,
+        aggregated_cxg_paths=aggregated_cxg_paths,
         inhibitory_analysis=inhibitory_analysis,
         source_dataset=source_dataset,
         min_dist=min_dist,
