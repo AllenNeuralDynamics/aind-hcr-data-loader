@@ -104,8 +104,10 @@ def _resolve_metrics_path(metrics_base_path, dataset_name=None, filename=None):
         if candidate.exists():
             return candidate
 
-    # Fall back to discovering any shape-metrics parquet in the directory.
-    matches = sorted(base.glob(SHAPE_METRICS_GLOB)) if base.is_dir() else []
+    # Fall back to discovering any shape-metrics parquet, searching recursively
+    # so a parquet nested one or more levels below the asset root is still found
+    # (captured assets sometimes wrap the file in a subfolder).
+    matches = sorted(base.rglob(SHAPE_METRICS_GLOB)) if base.is_dir() else []
     if len(matches) == 1:
         return matches[0]
     if len(matches) > 1:
@@ -113,18 +115,32 @@ def _resolve_metrics_path(metrics_base_path, dataset_name=None, filename=None):
             named = [m for m in matches if m.name.startswith(dataset_name)]
             if len(named) == 1:
                 return named[0]
-        listing = "\n    ".join(m.name for m in matches)
+        listing = "\n    ".join(str(m.relative_to(base)) for m in matches)
         raise FileNotFoundError(
-            f"Multiple shape-metrics parquets found in {base}; cannot pick one:\n"
+            f"Multiple shape-metrics parquets found under {base}; cannot pick one:\n"
             f"    {listing}\n"
             "Pass an explicit filename, or set metrics_base_path to a directory "
             "containing a single shape-metrics parquet."
         )
 
+    # Nothing matched -- surface what *is* there so the failure is diagnosable
+    # (missing asset vs. unexpected layout/filename).
+    if not base.exists():
+        present = "<path does not exist -- asset likely not attached/mounted>"
+    else:
+        try:
+            entries = sorted(p.name + ("/" if p.is_dir() else "") for p in base.iterdir())
+        except OSError as err:
+            entries = [f"<could not list directory: {err}>"]
+        present = "\n    ".join(entries[:40]) if entries else "<empty directory>"
+        if len(entries) > 40:
+            present += f"\n    ... (+{len(entries) - 40} more)"
     raise FileNotFoundError(
-        f"No shape-metrics parquet (matching '{SHAPE_METRICS_GLOB}') found in "
+        f"No shape-metrics parquet (matching '{SHAPE_METRICS_GLOB}') found under "
         f"{base}.\nChecked the roi-shape-metrics asset for "
-        f"'<dataset>_seg_shape_metrics.parquet' / '{SHAPE_METRICS_FILE}'. "
+        f"'<dataset>_seg_shape_metrics.parquet' / '{SHAPE_METRICS_FILE}' and "
+        "searched recursively. Contents of the path:\n"
+        f"    {present}\n"
         "Confirm the roi-shape-metrics data asset is attached to this capsule "
         "run and mounted at that path (it is gitignored and only exists inside "
         "Code Ocean)."
