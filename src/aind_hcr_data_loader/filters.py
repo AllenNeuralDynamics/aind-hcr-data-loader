@@ -98,7 +98,8 @@ def _resolve_metrics_path(metrics_base_path, dataset_name=None, filename=None):
     preferred = []
     if dataset_name:
         preferred.append(base / f"{dataset_name}_seg_shape_metrics.parquet")
-    preferred.append(base / SHAPE_METRICS_FILE)
+    preferred.append(base / "seg_shape_metrics.parquet")  # current capsule output
+    preferred.append(base / SHAPE_METRICS_FILE)           # legacy/dev name
     for candidate in preferred:
         if candidate.exists():
             return candidate
