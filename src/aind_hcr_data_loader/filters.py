@@ -25,6 +25,61 @@ import pickle
 from aind_hcr_data_loader.hcr_dataset import HCRDataset
 from aind_hcr_qc.utils.utils import saveable_plot
 
+SHAPE_METRICS_FILE = "seg_shape_metrics_pyr2.parquet"
+
+
+def _resolve_metrics_path(metrics_base_path, filename=SHAPE_METRICS_FILE):
+    """Resolve and validate the shape-metrics file path.
+
+    Shape-dependent filtering relies on a roi-shape-metrics parquet that is
+    generated off-pipeline (the ``aind-hcr-roi-features`` capsule) and attached
+    as a derived data asset. When it is missing the failures are otherwise
+    cryptic (``str / str`` TypeError, or a bare pandas read error), so raise a
+    clear, actionable message instead.
+
+    Parameters
+    ----------
+    metrics_base_path : str or pathlib.Path or None
+        Directory holding the shape-metrics parquet. Usually
+        ``HCRDataset.metrics_base_path``.
+    filename : str, default=SHAPE_METRICS_FILE
+        Parquet file expected inside ``metrics_base_path``.
+
+    Returns
+    -------
+    pathlib.Path
+        Validated path to the metrics parquet.
+
+    Raises
+    ------
+    ValueError
+        If ``metrics_base_path`` is not set (None/empty).
+    FileNotFoundError
+        If the resolved parquet does not exist on disk.
+    """
+    if not metrics_base_path:
+        raise ValueError(
+            "Shape-dependent filtering requires a roi-shape-metrics asset, but "
+            "metrics_base_path is not set. Construct the dataset with it, e.g.\n"
+            "    HCRDataset(..., metrics_base_path='/root/capsule/data/<roi-shape-metrics>')\n"
+            "or rely on create_hcr_dataset_from_schema(), which resolves it from "
+            "derived_assets.roi_shape_metrics in the dataset-catalog record. "
+            "Note: not every mouse in ophys-mfish-dataset-catalog has a "
+            "roi_shape_metrics asset yet."
+        )
+
+    metrics_path = Path(metrics_base_path) / filename
+    if not metrics_path.exists():
+        raise FileNotFoundError(
+            f"Shape-metrics file not found: {metrics_path}\n"
+            f"Expected '{filename}' inside the roi-shape-metrics asset "
+            f"({metrics_base_path}). Check that the roi-shape-metrics data asset "
+            "is attached to this capsule run and mounted at that path "
+            "(it is gitignored and only exists inside Code Ocean)."
+        )
+    return metrics_path
+
+
 def roi_filter_comprehensive(
     ds: HCRDataset,
     round_key: str = "R1",
@@ -89,7 +144,7 @@ def roi_filter_comprehensive(
     # 1. Load metrics data
     # -------------------------------------------------------------------------
     dataset_name = ds.rounds[round_key].name
-    metrics_path = ds.metrics_base_path / "seg_shape_metrics_pyr2.parquet"
+    metrics_path = _resolve_metrics_path(ds.metrics_base_path)
     
     if verbose:
         print(f"\n[1/5] Loading metrics from: {metrics_path}")
@@ -261,7 +316,7 @@ def filter_tile_boundary_rois(
     overlap_bbox_array = ta.get_overlap_bbox_array_from_dict(stitched_xml, pairs)
 
     # load metrics and upscale
-    metrics_path = Path(metrics_base_path) / "seg_shape_metrics_pyr2.parquet"
+    metrics_path = _resolve_metrics_path(metrics_base_path)
     print(f"Loading metrics from {metrics_path}")
     df = pd.read_parquet(metrics_path)
     centroid_cols = ['centroid_y', 'centroid_x']
