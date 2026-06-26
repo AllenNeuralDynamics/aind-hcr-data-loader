@@ -25,25 +25,38 @@ import pickle
 from aind_hcr_data_loader.hcr_dataset import HCRDataset
 from aind_hcr_qc.utils.utils import saveable_plot
 
-SHAPE_METRICS_FILE = "seg_shape_metrics_pyr2.parquet"
+# Any shape-metrics parquet matches this glob. The aind-hcr-roi-features capsule
+# writes "<dataset>_seg_shape_metrics.parquet" (see its run_capsule.py); older
+# dev/scratch runs wrote the unprefixed "seg_shape_metrics_pyr2.parquet". Match
+# both rather than hard-coding one name.
+SHAPE_METRICS_GLOB = "*seg_shape_metrics*.parquet"
+SHAPE_METRICS_FILE = "seg_shape_metrics_pyr2.parquet"  # legacy/dev name
 
 
-def _resolve_metrics_path(metrics_base_path, filename=SHAPE_METRICS_FILE):
-    """Resolve and validate the shape-metrics file path.
+def _resolve_metrics_path(metrics_base_path, dataset_name=None, filename=None):
+    """Resolve and validate the shape-metrics parquet path.
 
     Shape-dependent filtering relies on a roi-shape-metrics parquet that is
     generated off-pipeline (the ``aind-hcr-roi-features`` capsule) and attached
-    as a derived data asset. When it is missing the failures are otherwise
-    cryptic (``str / str`` TypeError, or a bare pandas read error), so raise a
-    clear, actionable message instead.
+    as a derived data asset. The filename varies by how it was produced -- the
+    capsule writes ``<dataset>_seg_shape_metrics.parquet`` while early dev runs
+    wrote ``seg_shape_metrics_pyr2.parquet`` -- so resolve it tolerantly instead
+    of assuming a single hard-coded name. When the asset is missing the failures
+    are otherwise cryptic (``str / str`` TypeError, or a bare pandas read error),
+    so raise a clear, actionable message instead.
 
     Parameters
     ----------
     metrics_base_path : str or pathlib.Path or None
         Directory holding the shape-metrics parquet. Usually
         ``HCRDataset.metrics_base_path``.
-    filename : str, default=SHAPE_METRICS_FILE
-        Parquet file expected inside ``metrics_base_path``.
+    dataset_name : str, optional
+        Processed dataset name (e.g. ``ds.rounds[round_key].name``). Used to
+        prefer ``<dataset_name>_seg_shape_metrics.parquet`` and to disambiguate
+        when several parquets share the directory.
+    filename : str, optional
+        Exact filename to require inside ``metrics_base_path``. When given, only
+        this name is accepted (no globbing).
 
     Returns
     -------
@@ -55,7 +68,7 @@ def _resolve_metrics_path(metrics_base_path, filename=SHAPE_METRICS_FILE):
     ValueError
         If ``metrics_base_path`` is not set (None/empty).
     FileNotFoundError
-        If the resolved parquet does not exist on disk.
+        If no matching parquet is found on disk, or the match is ambiguous.
     """
     if not metrics_base_path:
         raise ValueError(
@@ -68,16 +81,53 @@ def _resolve_metrics_path(metrics_base_path, filename=SHAPE_METRICS_FILE):
             "roi_shape_metrics asset yet."
         )
 
-    metrics_path = Path(metrics_base_path) / filename
-    if not metrics_path.exists():
+    base = Path(metrics_base_path)
+
+    # An explicit filename short-circuits discovery.
+    if filename:
+        candidate = base / filename
+        if candidate.exists():
+            return candidate
         raise FileNotFoundError(
-            f"Shape-metrics file not found: {metrics_path}\n"
-            f"Expected '{filename}' inside the roi-shape-metrics asset "
-            f"({metrics_base_path}). Check that the roi-shape-metrics data asset "
-            "is attached to this capsule run and mounted at that path "
-            "(it is gitignored and only exists inside Code Ocean)."
+            f"Shape-metrics file not found: {candidate}\n"
+            "Check that the roi-shape-metrics data asset is attached to this "
+            "capsule run and mounted at that path."
         )
-    return metrics_path
+
+    # Preferred exact names, most specific first.
+    preferred = []
+    if dataset_name:
+        preferred.append(base / f"{dataset_name}_seg_shape_metrics.parquet")
+    preferred.append(base / SHAPE_METRICS_FILE)
+    for candidate in preferred:
+        if candidate.exists():
+            return candidate
+
+    # Fall back to discovering any shape-metrics parquet in the directory.
+    matches = sorted(base.glob(SHAPE_METRICS_GLOB)) if base.is_dir() else []
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        if dataset_name:
+            named = [m for m in matches if m.name.startswith(dataset_name)]
+            if len(named) == 1:
+                return named[0]
+        listing = "\n    ".join(m.name for m in matches)
+        raise FileNotFoundError(
+            f"Multiple shape-metrics parquets found in {base}; cannot pick one:\n"
+            f"    {listing}\n"
+            "Pass an explicit filename, or set metrics_base_path to a directory "
+            "containing a single shape-metrics parquet."
+        )
+
+    raise FileNotFoundError(
+        f"No shape-metrics parquet (matching '{SHAPE_METRICS_GLOB}') found in "
+        f"{base}.\nChecked the roi-shape-metrics asset for "
+        f"'<dataset>_seg_shape_metrics.parquet' / '{SHAPE_METRICS_FILE}'. "
+        "Confirm the roi-shape-metrics data asset is attached to this capsule "
+        "run and mounted at that path (it is gitignored and only exists inside "
+        "Code Ocean)."
+    )
 
 
 def roi_filter_comprehensive(
@@ -144,7 +194,7 @@ def roi_filter_comprehensive(
     # 1. Load metrics data
     # -------------------------------------------------------------------------
     dataset_name = ds.rounds[round_key].name
-    metrics_path = _resolve_metrics_path(ds.metrics_base_path)
+    metrics_path = _resolve_metrics_path(ds.metrics_base_path, dataset_name=dataset_name)
     
     if verbose:
         print(f"\n[1/5] Loading metrics from: {metrics_path}")
@@ -316,7 +366,9 @@ def filter_tile_boundary_rois(
     overlap_bbox_array = ta.get_overlap_bbox_array_from_dict(stitched_xml, pairs)
 
     # load metrics and upscale
-    metrics_path = _resolve_metrics_path(metrics_base_path)
+    metrics_path = _resolve_metrics_path(
+        metrics_base_path, dataset_name=ds.rounds[round_key].name
+    )
     print(f"Loading metrics from {metrics_path}")
     df = pd.read_parquet(metrics_path)
     centroid_cols = ['centroid_y', 'centroid_x']
