@@ -26,6 +26,7 @@ def get_hcr_dataset_pairwise(
     return_removed: bool = False,
     coreg_cells_only: bool = False,
     catalog_path: Path | None = None,
+    pairwise_only: bool = False,
 ) -> tuple:
     """
     Attach assets, load the HCR dataset and (optionally) the pairwise-unmixing
@@ -40,6 +41,20 @@ def get_hcr_dataset_pairwise(
         DataFrame (distinguished by the ``removed`` bool column).
         Pass ``coreg_cells_only=True`` to load only spots whose ``cell_id`` is
         present in ``dataset.load_coreg_table()['hcr_id']``.
+
+    pairwise_only : bool
+        When ``True``, skip building the full multi-round ``HCRDataset`` and
+        work only from the pairwise-unmixing asset. Use this when only the
+        pairwise asset is mounted: the default path calls
+        ``create_hcr_dataset_from_schema`` first, which reads a
+        ``processing_manifest.json`` from *every* round folder in the catalog
+        record and raises ``FileNotFoundError`` if any round asset is not
+        mounted. ``create_pairwise_unmixing_dataset`` reads everything it needs
+        from the pairwise asset itself; ``source_dataset`` (the full dataset) is
+        only used to delegate zarr/segmentation/centroid access, which callers
+        that only touch the unmixed cell/spot tables never need. In this mode
+        the round assets are also not attached, ``dataset`` is returned as
+        ``None``, and zarr/segmentation calls on ``pw_ds`` will raise.
     """
     mouse_id = str(mouse_id)
 
@@ -49,17 +64,35 @@ def get_hcr_dataset_pairwise(
             #f"/opt/venv/src/ophys-mfish-dataset-catalog/mice/{mouse_id}.json"
         )
 
+    if pairwise_only and coreg_cells_only:
+        raise ValueError(
+            "coreg_cells_only=True requires the full dataset, which is not built "
+            "when pairwise_only=True."
+        )
+
     # ── attach & load ────────────────────────────────────────────────────────
     record = MouseRecord.from_json_file(catalog_path)
-    results = attach_mouse_record_to_workstation(record)
+    # Don't attach the round assets in pairwise-only mode — they aren't needed.
+    results = attach_mouse_record_to_workstation(
+        record, include_rounds=not pairwise_only
+    )
     print_attach_results(results)
 
-    dataset = create_hcr_dataset_from_schema(catalog_path, data_dir)
-    dataset.summary()
+    if pairwise_only:
+        dataset = None
+    else:
+        dataset = create_hcr_dataset_from_schema(catalog_path, data_dir)
+        dataset.summary()
 
     # ── pairwise unmixing (optional) ─────────────────────────────────────────
     pairwise_asset_name = record.derived_assets.get("pairwise_unmixing")
     spots = None
+
+    if pairwise_only and pairwise_asset_name is None:
+        raise FileNotFoundError(
+            f"pairwise_only=True but the catalog record {catalog_path} has no "
+            "'derived_assets.pairwise_unmixing' entry."
+        )
 
     if pairwise_asset_name is not None:
         pairwise_asset_path = data_dir / pairwise_asset_name
